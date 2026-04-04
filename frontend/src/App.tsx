@@ -1,8 +1,9 @@
 
+import Onboarding from './Onboarding';
 
 const App = () => {
   return (
-    <div>App</div>
+    <Onboarding />
   )
 }
 
