@@ -18,7 +18,9 @@
   --warn:#e3b341;
   --warn-rgb:227,179,65;
 
-  min-height: 100vh;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
   background-color: var(--bg);
   color: var(--text);
   font-family: 'Epilogue', sans-serif;
@@ -108,14 +110,17 @@
   flex: 1;
   display: flex;
   overflow: hidden;
+  min-height: 0;
 }
 
 .dash-sidebar {
   width: 280px;
+  min-width: 280px;
   border-right: 1px solid var(--border);
   background: var(--surface);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .sidebar-header {
@@ -195,6 +200,8 @@
   background: var(--bg);
   padding: 40px 60px;
   overflow-y: auto;
+  overflow-x: hidden;
+  scroll-behavior: smooth;
 }
 
 .empty-dashboard {
