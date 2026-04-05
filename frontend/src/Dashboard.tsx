@@ -45,7 +45,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
       id: Date.now().toString(),
       name: newProj.name,
       description: newProj.description,
-      cloneCode: `nexus-x init ${slug}`,
+      cloneCode: slug,
       members: []
     };
     setProjects([...projects, project]);
@@ -159,11 +159,18 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                     <p>{p.description || '// no description provided'}</p>
                   </div>
 
-                  <div className="clone-box">
-                    <div className="clone-label">→ INIT_URL — paste it in your terminal</div>
-                    <div className="clone-cmd">
-                      <code>{p.cloneCode}</code>
-                      <button className="clone-copy" onClick={() => navigator.clipboard.writeText(p.cloneCode)}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+                  <div className="clone-box custom-doc-box">
+                    <div className="clone-label">→ CONNECT REPOSITORY via CLI</div>
+                    <div className="terminal-block">
+                      <div className="term-line"><span className="term-prompt">$</span> npm i -g nexus-x-cli</div>
+                      <div className="term-line"><span className="term-prompt">$</span> nexus init</div>
+                      <div className="term-line term-line-interactive">
+                        <span><span className="term-prompt">$</span> nexus remote {p.cloneCode}</span>
+                        <button className="clone-copy inline-copy" onClick={() => navigator.clipboard.writeText(`nexus remote ${p.cloneCode}`)}>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                        </button>
+                      </div>
+                      <div className="term-line"><span className="term-prompt">$</span> nexus push</div>
                     </div>
                   </div>
                   
