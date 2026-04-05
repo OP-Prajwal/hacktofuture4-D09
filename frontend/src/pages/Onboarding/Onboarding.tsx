@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import './Onboarding.css';
 
-import { UserSession } from '../../App';
+import type { UserSession } from '../../App';
 
 interface OnboardingProps {
   onLaunch: (data: UserSession) => void;

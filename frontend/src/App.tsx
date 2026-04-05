@@ -15,15 +15,23 @@ export interface UserSession {
 }
 
 const App = () => {
-  const [session, setSession] = useState<UserSession | null>(null);
+  const [session, setSession] = useState<UserSession | null>(() => {
+    const saved = localStorage.getItem('nexus_session');
+    if (saved) {
+      try { return JSON.parse(saved); } catch { return null; }
+    }
+    return null;
+  });
   const navigate = useNavigate();
 
   const handleLaunch = (data: UserSession) => {
+    localStorage.setItem('nexus_session', JSON.stringify(data));
     setSession(data);
     navigate('/dashboard');
   };
 
   const handleLogout = () => {
+    localStorage.removeItem('nexus_session');
     setSession(null);
     navigate('/');
   };
