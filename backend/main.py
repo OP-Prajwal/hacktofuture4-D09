@@ -1,5 +1,5 @@
 import json
-from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi import FastAPI, HTTPException, Request, Depends, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -171,6 +171,16 @@ def get_blob(workspace: str, project_name: str, file_hash: str):
     if not info:
         raise HTTPException(status_code=404, detail="Blob not found")
     return info
+
+
+@app.get("/api/repo/{workspace}/{project_name}/blob/{file_hash}/content")
+def get_blob_content_endpoint(workspace: str, project_name: str, file_hash: str):
+    """Returns actual binary content of a stored blob."""
+    from services.blob_service import get_blob_content
+    content = get_blob_content(file_hash)
+    if not content:
+        raise HTTPException(status_code=404, detail="Blob not found")
+    return Response(content=content)
 
 
 class ManifestFile(BaseModel):

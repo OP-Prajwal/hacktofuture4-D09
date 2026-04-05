@@ -57,9 +57,9 @@ function formatSize(bytes: number): string {
 
 // ─── Individual tree nodes ────────────────────────────────────────────────────
 
-function FileRow({ node }: { node: FileNode }) {
+function FileRow({ node, onFileClick }: { node: FileNode, onFileClick?: (node: FileNode) => void }) {
   return (
-    <div className="ft-row ft-file">
+    <div className="ft-row ft-file" onClick={() => onFileClick?.(node)} style={{ cursor: onFileClick ? 'pointer' : 'default' }}>
       <span className="ft-indent-line" />
       <span className="ft-icon file-icon">
         <span className="ft-ext-dot" style={{ background: extColor(node.extension) }} />
@@ -71,7 +71,7 @@ function FileRow({ node }: { node: FileNode }) {
   );
 }
 
-function DirRow({ node, depth }: { node: DirNode; depth: number }) {
+function DirRow({ node, depth, onFileClick }: { node: DirNode; depth: number; onFileClick?: (node: FileNode) => void }) {
   const [open, setOpen] = useState(depth < 2); // expand first 2 levels by default
 
   return (
@@ -85,8 +85,8 @@ function DirRow({ node, depth }: { node: DirNode; depth: number }) {
         <div className="ft-children" style={{ '--depth': depth } as React.CSSProperties}>
           {node.children.map((child, i) =>
             child.type === 'dir'
-              ? <DirRow key={i} node={child} depth={depth + 1} />
-              : <FileRow key={i} node={child} />
+              ? <DirRow key={i} node={child} depth={depth + 1} onFileClick={onFileClick} />
+              : <FileRow key={i} node={child} onFileClick={onFileClick} />
           )}
         </div>
       )}
@@ -100,9 +100,10 @@ interface FileTreeProps {
   data: TreeData | null;
   loading: boolean;
   noPush: boolean;
+  onFileClick?: (node: FileNode) => void;
 }
 
-export default function FileTree({ data, loading, noPush }: FileTreeProps) {
+export default function FileTree({ data, loading, noPush, onFileClick }: FileTreeProps) {
   if (loading) {
     return (
       <div className="ft-state">
@@ -140,8 +141,8 @@ export default function FileTree({ data, loading, noPush }: FileTreeProps) {
       <div className="ft-body">
         {data.tree.children.map((child, i) =>
           child.type === 'dir'
-            ? <DirRow key={i} node={child} depth={0} />
-            : <FileRow key={i} node={child} />
+            ? <DirRow key={i} node={child} depth={0} onFileClick={onFileClick} />
+            : <FileRow key={i} node={child} onFileClick={onFileClick} />
         )}
       </div>
     </div>

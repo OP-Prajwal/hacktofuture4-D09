@@ -541,3 +541,74 @@
 .inline-copy:hover {
   background: rgba(255, 255, 255, 0.2);
 }
+
+/* File Viewer Modal Styles */
+.file-viewer-modal {
+  position: absolute;
+  top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(4px);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+}
+.fvm-content {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  width: 100%; max-width: 900px;
+  height: 100%; max-height: 80vh;
+  display: flex; flex-direction: column;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+  overflow: hidden;
+}
+.fvm-header {
+  height: 54px;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 20px;
+  background: var(--surface2);
+}
+.fvm-title {
+  font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 600; color: var(--text);
+  display: flex; align-items: center;
+}
+.fvm-close {
+  background: transparent; border: none; color: var(--text2); cursor: pointer; padding: 4px; border-radius: 4px;
+  transition: all 0.2s;
+}
+.fvm-close:hover { background: rgba(255,255,255,0.1); color: #fff; }
+.fvm-body {
+  flex: 1; overflow: auto; padding: 0; background: var(--bg);
+}
+/* Override global index.css code/pre rules inside the viewer */
+.fvm-body pre {
+  display: block !important;
+  margin: 0 !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 13px !important;
+  line-height: 1.5 !important;
+  white-space: pre !important;
+  overflow-x: auto !important;
+  word-break: normal !important;
+  background: transparent !important;
+  padding: 0 !important;
+}
+.fvm-body code {
+  display: block !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 13px !important;
+  background: none !important;
+  padding: 0 !important;
+  color: inherit !important;
+  white-space: pre !important;
+  word-break: normal !important;
+  line-height: 1.5 !important;
+  border-radius: 0 !important;
+}
+.fvm-body span {
+  white-space: pre !important;
+}
+.fvm-loading { color: var(--text3); font-family: 'JetBrains Mono', monospace; font-size: 13px; font-style: italic; padding: 20px; }

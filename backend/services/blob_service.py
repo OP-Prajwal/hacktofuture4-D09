@@ -72,3 +72,11 @@ def get_blob_info(file_hash: str) -> dict | None:
         "length":    grid_out.length,
         "upload_id": str(grid_out._id)
     }
+
+def get_blob_content(file_hash: str) -> bytes | None:
+    """Return raw bytes for a stored blob."""
+    fs = _get_gridfs()
+    grid_out = fs.find_one({"filename": file_hash})
+    if not grid_out:
+        return None
+    return grid_out.read()

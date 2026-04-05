@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import './Dashboard.css';
 import type { UserSession } from '../../App';
-import FileTree, { type TreeData } from '../../components/FileTree/FileTree';
+import FileTree, { type TreeData, type FileNode } from '../../components/FileTree/FileTree';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 const BACKEND = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
 
@@ -24,6 +26,27 @@ interface DashboardProps {
   onLogout: () => void;
 }
 
+const getLanguage = (filename: string) => {
+  const ext = filename.split('.').pop()?.toLowerCase();
+  switch (ext) {
+    case 'js':
+    case 'jsx': return 'javascript';
+    case 'ts':
+    case 'tsx': return 'typescript';
+    case 'py': return 'python';
+    case 'css': return 'css';
+    case 'html': return 'markup';
+    case 'json': return 'json';
+    case 'md': return 'markdown';
+    case 'yml':
+    case 'yaml': return 'yaml';
+    case 'sh': return 'bash';
+    case 'go': return 'go';
+    case 'rs': return 'rust';
+    default: return 'text';
+  }
+};
+
 const Dashboard = ({ session, onLogout }: DashboardProps) => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProject, setActiveProject] = useState<string | null>(null);
@@ -39,6 +62,9 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
   const [treeData, setTreeData] = useState<TreeData | null>(null);
   const [treeLoading, setTreeLoading] = useState(false);
   const [noPush, setNoPush] = useState(false);
+
+  // File Viewer state
+  const [viewingFile, setViewingFile] = useState<{ node: FileNode, content: string | null, loading: boolean } | null>(null);
 
   const isEnterprise = session.type === 'enterprise';
   const orgName = isEnterprise ? session.company : `${session.name}'s Workspace`;
@@ -63,6 +89,24 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
       setTreeLoading(false);
     }
   }, []);
+
+  const handleFileClick = useCallback(async (node: FileNode) => {
+    setViewingFile({ node, content: null, loading: true });
+    try {
+      const p = projects.find(x => x.id === activeProject);
+      if (!p) return;
+      const [workspace, project] = p.cloneCode.split('/');
+      const res = await fetch(`${BACKEND}/api/repo/${workspace}/${project}/blob/${node.hash}/content`);
+      if (res.ok) {
+        const text = await res.text();
+        setViewingFile({ node, content: text, loading: false });
+      } else {
+        setViewingFile({ node, content: "// Failed to fetch file content", loading: false });
+      }
+    } catch {
+      setViewingFile({ node, content: "// Failed to fetch file content", loading: false });
+    }
+  }, [activeProject, projects]);
 
   // Fetch projects initially
   const loadProjects = useCallback(async () => {
@@ -232,6 +276,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                     data={treeData}
                     loading={treeLoading}
                     noPush={noPush}
+                    onFileClick={handleFileClick}
                   />
 
                   {/* ── Setup Guide ── */}
@@ -324,6 +369,34 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
           )}
         </div>
       </main>
+
+      {/* ── File Viewer Modal ── */}
+      {viewingFile && (
+        <div className="file-viewer-modal">
+          <div className="fvm-content">
+            <div className="fvm-header">
+              <span className="fvm-title">{viewingFile.node.name}</span>
+              <button className="fvm-close" onClick={() => setViewingFile(null)}>✕</button>
+            </div>
+            <div className="fvm-body">
+              {viewingFile.loading ? (
+                <div className="fvm-loading">Loading content...</div>
+              ) : (
+                <SyntaxHighlighter
+                  language={getLanguage(viewingFile.node.name)}
+                  style={vscDarkPlus}
+                  customStyle={{ margin: 0, padding: 0, background: 'transparent', fontSize: '13px' }}
+                  showLineNumbers={true}
+                  wrapLines={true}
+                  lineProps={{ style: { display: 'block' } }}
+                >
+                  {viewingFile.content || ''}
+                </SyntaxHighlighter>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
