@@ -1,6 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import './Dashboard.css';
 import type { UserSession } from '../../App';
+import FileTree, { type TreeData } from '../../components/FileTree/FileTree';
+
+const BACKEND = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
 
 interface Member {
   name: string;
@@ -24,7 +27,7 @@ interface DashboardProps {
 const Dashboard = ({ session, onLogout }: DashboardProps) => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProject, setActiveProject] = useState<string | null>(null);
-  
+
   // Create Project State
   const [showNewProj, setShowNewProj] = useState(false);
   const [newProj, setNewProj] = useState({ name: '', description: '' });
@@ -32,11 +35,44 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
   // Add Member State
   const [newMem, setNewMem] = useState({ name: '', email: '', role: 'developer' });
 
+  // File tree state
+  const [treeData, setTreeData] = useState<TreeData | null>(null);
+  const [treeLoading, setTreeLoading] = useState(false);
+  const [noPush, setNoPush] = useState(false);
+
   const isEnterprise = session.type === 'enterprise';
   const orgName = isEnterprise ? session.company : `${session.name}'s Workspace`;
 
   const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
   const genHex = () => Math.random().toString(16).slice(2, 8);
+
+  // Fetch file tree when project is selected
+  const fetchTree = useCallback(async (cloneCode: string) => {
+    setTreeLoading(true);
+    setTreeData(null);
+    setNoPush(false);
+    const [workspace, project] = cloneCode.split('/');
+    try {
+      const res = await fetch(`${BACKEND}/api/repo/${workspace}/${project}/tree`);
+      const json = await res.json();
+      if (json.status === 'no_push' || !json.tree) {
+        setNoPush(true);
+      } else {
+        setTreeData(json as TreeData);
+      }
+    } catch {
+      setNoPush(true);
+    } finally {
+      setTreeLoading(false);
+    }
+  }, []);
+
+  // When active project changes, load tree
+  useEffect(() => {
+    if (!activeProject) return;
+    const p = projects.find(x => x.id === activeProject);
+    if (p) fetchTree(p.cloneCode);
+  }, [activeProject, projects, fetchTree]);
 
   const handleCreateProject = () => {
     if (!newProj.name.trim()) return;
@@ -56,9 +92,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
   const handleAddMember = (projectId: string) => {
     if (!newMem.name.trim() || !newMem.email.trim()) return;
     setProjects(projects.map(p => {
-      if (p.id === projectId) {
-        return { ...p, members: [...p.members, { ...newMem }] };
-      }
+      if (p.id === projectId) return { ...p, members: [...p.members, { ...newMem }] };
       return p;
     }));
     setNewMem({ name: '', email: '', role: 'developer' });
@@ -105,8 +139,8 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
               <div className="empty-state-small">No projects yet.</div>
             ) : (
               projects.map(p => (
-                <button 
-                  key={p.id} 
+                <button
+                  key={p.id}
                   className={`proj-link ${activeProject === p.id ? 'active' : ''}`}
                   onClick={() => setActiveProject(p.id)}
                 >
@@ -123,26 +157,15 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
             <div className="proj-form-card">
               <h2>Deploy New Project</h2>
               <p>Initialize a new project environment under <strong>{orgName}</strong>.</p>
-              
               <div className="form-group mt-4">
                 <label>PROJECT_NAME</label>
-                <input 
-                  type="text" 
-                  className="dash-input" 
-                  placeholder="e.g. Core API Service" 
-                  value={newProj.name} 
-                  onChange={e => setNewProj({...newProj, name: e.target.value})} 
-                />
+                <input type="text" className="dash-input" placeholder="e.g. Core API Service"
+                  value={newProj.name} onChange={e => setNewProj({...newProj, name: e.target.value})} />
               </div>
               <div className="form-group mt-3">
                 <label>DESCRIPTION_TAG</label>
-                <input 
-                  type="text" 
-                  className="dash-input" 
-                  placeholder="e.g. backend graph processing" 
-                  value={newProj.description} 
-                  onChange={e => setNewProj({...newProj, description: e.target.value})} 
-                />
+                <input type="text" className="dash-input" placeholder="e.g. backend graph processing"
+                  value={newProj.description} onChange={e => setNewProj({...newProj, description: e.target.value})} />
               </div>
               <div className="form-actions mt-4">
                 <button className="btn-dash-primary" onClick={handleCreateProject} disabled={!newProj.name}>deploy project</button>
@@ -159,12 +182,19 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                     <p>{p.description || '// no description provided'}</p>
                   </div>
 
+                  {/* ── File Tree from DB ── */}
+                  <FileTree
+                    data={treeData}
+                    loading={treeLoading}
+                    noPush={noPush}
+                  />
+
+                  {/* ── Setup Guide ── */}
                   <div className="setup-documentation-wrapper">
                     <div className="setup-header">
                       <h3>📚 Quick Setup Guide</h3>
                       <p>To integrate your local repository with this NEXUS-X workspace and unlock structural code intelligence, follow the steps below.</p>
                     </div>
-                    
                     <div className="doc-grid">
                       <div className="doc-card">
                         <div className="doc-step-badge">1</div>
@@ -174,7 +204,6 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                           <div className="term-line"><span className="term-prompt">$</span> npm i -g nexus-x-cli</div>
                         </div>
                       </div>
-
                       <div className="doc-card">
                         <div className="doc-step-badge">2</div>
                         <h4>Initialize Workspace</h4>
@@ -183,15 +212,14 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                           <div className="term-line"><span className="term-prompt">$</span> nexus init</div>
                         </div>
                       </div>
-
                       <div className="doc-card full-span">
                         <div className="doc-step-badge">3</div>
-                        <h4>Connect Origin & Push Knowledge Graph</h4>
-                        <p>Link your local setup directly to this remote workspace identity and sync the data.</p>
+                        <h4>Connect Origin &amp; Push</h4>
+                        <p>Link your local setup to this remote and sync the file graph.</p>
                         <div className="terminal-block">
                           <div className="term-line term-line-interactive">
                             <span><span className="term-prompt">$</span> nexus remote {p.cloneCode}</span>
-                            <button className="clone-copy inline-copy" onClick={() => navigator.clipboard.writeText(`nexus remote ${p.cloneCode}`)} title="Copy remote command">
+                            <button className="clone-copy inline-copy" onClick={() => navigator.clipboard.writeText(`nexus remote ${p.cloneCode}`)} title="Copy">
                               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                             </button>
                           </div>
@@ -200,13 +228,13 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                       </div>
                     </div>
                   </div>
-                  
+
+                  {/* ── Team Members ── */}
                   <div className="proj-members-section">
                     <div className="section-title">
                       <h3>Team Members</h3>
                       <span className="badge">{p.members.length}</span>
                     </div>
-
                     <div className="add-member-widget">
                       <div className="widget-label">&rarr; ATTACH_MEMBER</div>
                       <div className="widget-row">
@@ -220,7 +248,6 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                         <button className="btn-dash-primary w-btn" onClick={() => handleAddMember(p.id)} disabled={!newMem.name || !newMem.email}>attach</button>
                       </div>
                     </div>
-
                     <div className="members-grid">
                       {p.members.length === 0 ? (
                         <div className="empty-state">No members attached to this project.</div>

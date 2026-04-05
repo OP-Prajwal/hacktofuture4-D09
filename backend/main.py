@@ -7,7 +7,7 @@ from db.mongo import mongo
 from db.neo4j_db import neo4j_db
 from services.project_service import ProjectPushRequest, build_project_graph_from_payload
 from services.blob_service import has_blob, stream_blob_to_gridfs, get_blob_info, is_text_file
-from services.commit_service import create_commit, get_commits
+from services.commit_service import create_commit, get_commits, get_latest_tree
 
 app = FastAPI(title="NEXUS-X Backend", version="1.0.0")
 
@@ -127,6 +127,18 @@ def push_commit(workspace: str, project_name: str, body: CommitBody):
 @app.get("/api/repo/{workspace}/{project_name}/commits")
 def list_commits(workspace: str, project_name: str, limit: int = 20):
     return {"commits": get_commits(workspace, project_name, limit)}
+
+
+@app.get("/api/repo/{workspace}/{project_name}/tree")
+def get_file_tree(workspace: str, project_name: str):
+    """
+    Returns the nested file tree from the most recent nexus push.
+    The tree is built from the commit manifest stored in MongoDB.
+    """
+    tree = get_latest_tree(workspace, project_name)
+    if not tree:
+        return {"status": "no_push", "tree": None}
+    return {"status": "ok", **tree}
 
 
 # ─── Health / test routes ─────────────────────────────────────────────────────

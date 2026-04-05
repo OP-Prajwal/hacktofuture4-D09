@@ -38,3 +38,72 @@ def get_commits(workspace: str, project: str, limit: int = 20) -> list[dict]:
         limit=limit
     )
     return list(cursor)
+
+
+def _build_tree(manifest: list[dict]) -> dict:
+    """
+    Convert a flat list of { path, hash, size, extension } entries into
+    a nested tree structure suitable for rendering in the frontend.
+
+    Output shape:
+    {
+      "type": "dir",
+      "name": "root",
+      "children": [
+        { "type": "dir", "name": "src", "children": [...] },
+        { "type": "file", "name": "README.md", "hash": "...", "size": 1234, "extension": ".md" }
+      ]
+    }
+    """
+    root: dict = {"type": "dir", "name": "root", "children": []}
+
+    for entry in manifest:
+        parts = entry["path"].replace("\\", "/").split("/")
+        node = root
+        # Walk/create directory nodes
+        for part in parts[:-1]:
+            existing = next((c for c in node["children"] if c["name"] == part and c["type"] == "dir"), None)
+            if not existing:
+                existing = {"type": "dir", "name": part, "children": []}
+                node["children"].append(existing)
+            node = existing
+        # Add the file leaf
+        filename = parts[-1]
+        node["children"].append({
+            "type":      "file",
+            "name":      filename,
+            "hash":      entry.get("hash", ""),
+            "size":      entry.get("size", 0),
+            "extension": entry.get("extension", "")
+        })
+
+    # Sort: dirs first, then files, both alphabetically
+    def sort_node(n: dict):
+        if "children" in n:
+            n["children"].sort(key=lambda x: (0 if x["type"] == "dir" else 1, x["name"].lower()))
+            for child in n["children"]:
+                sort_node(child)
+    sort_node(root)
+    return root
+
+
+def get_latest_tree(workspace: str, project: str) -> dict | None:
+    """
+    Returns the nested file tree from the most recent push commit.
+    Returns None if no commit exists yet.
+    """
+    commits = mongo.get_collection("commits")
+    latest = commits.find_one(
+        {"workspace": workspace, "project": project},
+        sort=[("pushed_at", -1)]
+    )
+    if not latest or not latest.get("manifest"):
+        return None
+
+    return {
+        "commit_id":  str(latest["_id"]),
+        "pushed_at":  latest["pushed_at"].isoformat(),
+        "total_files": latest["total_files"],
+        "tree": _build_tree(latest["manifest"])
+    }
+
