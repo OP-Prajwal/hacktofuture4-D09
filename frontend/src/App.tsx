@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Routes, Route, useNavigate, Navigate } from 'react-router-dom';
-import Onboarding from './Onboarding';
-import Dashboard from './Dashboard';
+import Onboarding from './pages/Onboarding/Onboarding';
+import Dashboard from './pages/Dashboard/Dashboard';
 
 export interface UserSession {
   type: 'individual' | 'enterprise';

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import './Dashboard.css';
-import type { UserSession } from './App';
+import type { UserSession } from '../../App';
 
 interface Member {
   name: string;
