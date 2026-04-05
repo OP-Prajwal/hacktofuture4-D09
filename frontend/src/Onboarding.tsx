@@ -1,60 +1,53 @@
 import { useState } from 'react';
 import './Onboarding.css';
 
-const Onboarding = () => {
+interface OnboardingProps {
+  onLaunch: (data: any) => void;
+}
+
+const Onboarding = ({ onLaunch }: OnboardingProps) => {
   const [theme, setTheme] = useState('dark');
   const [step, setStep] = useState(0);
   const [type, setType] = useState<string | null>(null);
-  const [ind, setInd] = useState({ name: '', phone: '', role: '' });
-  const [ent, setEnt] = useState({ name: '', job: '', ws: '', members: [] as any[] });
-  const [nm, setNm] = useState({ name: '', email: '', role: 'developer' });
+  
+  // Data stores
+  const [ind, setInd] = useState({ name: '', email: '', role: '' });
+  const [ent, setEnt] = useState({ company: '', name: '', email: '', phone: '' });
 
   const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
 
-  const ini = (n: string) => (n || '??').split(' ').map(w => w[0] || '').join('').toUpperCase().slice(0, 2);
-  const rClass = (r: string) => {
-    if (r === 'admin') return 'r-admin';
-    if (r === 'viewer') return 'r-viewer';
-    if (r === 'devops') return 'r-devops';
-    if (r === 'security') return 'r-security';
-    return 'r-dev';
-  };
-
-  const addMember = () => {
-    if (!nm.name.trim() || !nm.email.trim()) return;
-    setEnt({ ...ent, members: [...ent.members, { ...nm }] });
-    setNm({ name: '', email: '', role: 'developer' });
-  };
-
-  const rmMember = (i: number) => {
-    const newMembers = [...ent.members];
-    newMembers.splice(i, 1);
-    setEnt({ ...ent, members: newMembers });
-  };
-
   const next = () => {
     if (step === 0 && !type) return;
-    if (step === 1 && type === 'individual' && !(ind.name && ind.phone && ind.role)) return;
-    if (step === 1 && type === 'enterprise' && !(ent.name && ent.job && ent.ws)) return;
-    if (step === 1 && type === 'individual') { setStep(2); }
-    else { setStep(step + 1); }
+    if (step === 1 && type === 'individual' && !(ind.name && ind.email && ind.role)) return;
+    if (step === 1 && type === 'enterprise' && !(ent.company && ent.name && ent.email && ent.phone)) return;
+    // Enterprise: skip success screen, go straight to dashboard
+    if (step === 1 && type === 'enterprise') {
+      onLaunch({ type: 'enterprise', name: ent.name, email: ent.email, phone: ent.phone, company: ent.company, role: 'admin' });
+      return;
+    }
+    setStep(step + 1);
   };
 
   const back = () => {
-    if (step === 2 && type === 'enterprise') setStep(1);
-    else if (step === 2) setStep(0);
-    else setStep(step - 1);
+    if (step > 0) setStep(step - 1);
   };
 
   const restart = () => {
     setStep(0); setType(null);
-    setInd({ name: '', phone: '', role: '' });
-    setEnt({ name: '', job: '', ws: '', members: [] });
-    setNm({ name: '', email: '', role: 'developer' });
+    setInd({ name: '', email: '', role: '' });
+    setEnt({ company: '', name: '', email: '', phone: '' });
+  };
+
+  const handleLaunchClick = () => {
+    if (type === 'enterprise') {
+      onLaunch({ type, name: ent.name, email: ent.email, company: ent.company, role: 'admin' });
+    } else {
+      onLaunch({ type, name: ind.name, email: ind.email, company: '', role: ind.role });
+    }
   };
 
   const renderDots = () => {
-    const total = step === 0 ? 3 : (type === 'enterprise' ? 3 : 2);
+    const total = 3; // (Type -> Details -> Success)
     return (
       <div className="dots">
         {Array.from({ length: total }).map((_, i) => (
@@ -103,7 +96,7 @@ const Onboarding = () => {
                     <div className="sel-dot">✓</div>
                     <div className="type-icon-wrap"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" strokeWidth="2" strokeLinecap="round"><rect x="2" y="7" width="20" height="14" rx="2" /><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2" /></svg></div>
                     <div className="type-name">Enterprise</div>
-                    <div className="type-hint">Team workspace.<br />Multi-member.</div>
+                    <div className="type-hint">Team workspace.<br />Nested projects.</div>
                   </button>
                 </div>
                 <div style={{ height: '20px' }}></div>
@@ -120,26 +113,28 @@ const Onboarding = () => {
                 <div className="prompt-line"><span className="ps">nexus@setup:~$</span> <span className="cmd">config --user</span><span className="terminal-cursor"></span></div>
                 <div className="card-title">Your <em>profile</em></div>
                 <div className="card-sub">// identity used across sessions & reports</div>
+                
                 <div className="field-group">
                   <div className="field-label"><span className="req">→</span> FULL_NAME</div>
                   <input className="field-input" placeholder="e.g. Arjun Mehta" value={ind.name} onChange={e => setInd({...ind, name: e.target.value})} />
                 </div>
                 <div className="field-group">
-                  <div className="field-label"><span className="req">→</span> PHONE_NUMBER</div>
-                  <input className="field-input" placeholder="+91 98765 43210" value={ind.phone} onChange={e => setInd({...ind, phone: e.target.value})} />
+                  <div className="field-label"><span className="req">→</span> EMAIL</div>
+                  <input className="field-input" placeholder="you@domain.com" value={ind.email} onChange={e => setInd({...ind, email: e.target.value})} />
                 </div>
                 <div className="field-group">
                   <div className="field-label"><span className="req">→</span> ROLE</div>
                   <select className="field-select" value={ind.role} onChange={e => setInd({...ind, role: e.target.value})}>
                     <option value="">-- select role --</option>
-                    {['full-stack engineer', 'backend engineer', 'frontend engineer', 'devops / SRE', 'security engineer', 'software architect', 'indie hacker'].map(r => (
+                    {['full-stack engineer', 'backend engineer', 'frontend engineer', 'devops / SRE', 'security engineer', 'indie hacker'].map(r => (
                       <option key={r} value={r}>{r}</option>
                     ))}
                   </select>
                 </div>
-                <button className="btn-primary" onClick={next} disabled={!(ind.name && ind.phone && ind.role)}>
+                
+                <button className="btn-primary" onClick={next} disabled={!(ind.name && ind.email && ind.role)}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
-                  launch nexus-x
+                  finalize setup
                 </button>
               </>
             )}
@@ -147,106 +142,56 @@ const Onboarding = () => {
             {step === 1 && type === 'enterprise' && (
               <>
                 <button className="back-btn" onClick={back}>← cd ..</button>
-                <div className="prompt-line"><span className="ps">nexus@setup:~$</span> <span className="cmd">config --workspace</span><span className="terminal-cursor"></span></div>
-                <div className="card-title">Workspace <em>config</em></div>
-                <div className="card-sub">// configure your org before adding members</div>
+                <div className="prompt-line"><span className="ps">nexus@setup:~$</span> <span className="cmd">config --org</span><span className="terminal-cursor"></span></div>
+                <div className="card-title">Enterprise <em>setup</em></div>
+                <div className="card-sub">// configure company domain and identity</div>
+                
                 <div className="field-group">
-                  <div className="field-label"><span className="req">→</span> ADMIN_NAME</div>
-                  <input className="field-input" placeholder="e.g. Priya Kapoor" value={ent.name} onChange={e => setEnt({...ent, name: e.target.value})} />
+                  <div className="field-label"><span className="req">→</span> COMPANY_NAME</div>
+                  <input className="field-input" placeholder="e.g. Acme Corp" value={ent.company} onChange={e => setEnt({...ent, company: e.target.value})} />
                 </div>
                 <div className="two-col">
                   <div className="field-group">
-                    <div className="field-label"><span className="req">→</span> JOB_ROLE</div>
-                    <select className="field-select" value={ent.job} onChange={e => setEnt({...ent, job: e.target.value})}>
-                      <option value="">-- select --</option>
-                      {['CTO', 'VP Engineering', 'Engineering Manager', 'Tech Lead', 'Staff Engineer', 'Principal Engineer'].map(r => (
-                        <option key={r} value={r}>{r}</option>
-                      ))}
-                    </select>
+                    <div className="field-label"><span className="req">→</span> YOUR_NAME</div>
+                    <input className="field-input" placeholder="Priya K." value={ent.name} onChange={e => setEnt({...ent, name: e.target.value})} />
                   </div>
                   <div className="field-group">
-                    <div className="field-label"><span className="req">→</span> WORKSPACE</div>
-                    <input className="field-input" placeholder="e.g. Acme Corp" value={ent.ws} onChange={e => setEnt({...ent, ws: e.target.value})} />
+                    <div className="field-label"><span className="req">→</span> YOUR_EMAIL</div>
+                    <input className="field-input" placeholder="priya@acme.com" value={ent.email} onChange={e => setEnt({...ent, email: e.target.value})} />
                   </div>
                 </div>
-                <button className="btn-primary" onClick={next} disabled={!(ent.name && ent.job && ent.ws)}>
+                <div className="field-group">
+                  <div className="field-label"><span className="req">→</span> PHONE_NUMBER</div>
+                  <input className="field-input" placeholder="+91 98765 43210" value={ent.phone} onChange={e => setEnt({...ent, phone: e.target.value})} />
+                </div>
+                
+                <button className="btn-primary" onClick={next} disabled={!(ent.company && ent.name && ent.email && ent.phone)}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
-                  add team members
+                  launch dashboard
                 </button>
               </>
             )}
 
-            {step === 2 && type === 'enterprise' && (
-              <>
-                <button className="back-btn" onClick={back}>← cd ..</button>
-                <div className="prompt-line"><span className="ps">nexus@{ent.ws || 'workspace'}:~$</span> <span className="cmd">team --add-members</span><span className="terminal-cursor"></span></div>
-                <div className="card-title">Team <em>members</em></div>
-                <div className="card-sub">// {ent.members.length} member{ent.members.length !== 1 ? 's' : ''} added · workspace: {ent.ws}</div>
-                {ent.members.map((m, i) => (
-                  <div className="member-item" key={i}>
-                    <div className="m-avatar">{ini(m.name)}</div>
-                    <div className="m-info">
-                      <div className="m-name">{m.name}</div>
-                      <div className="m-email">{m.email}</div>
-                    </div>
-                    <span className={`m-role ${rClass(m.role)}`}>{m.role}</span>
-                    <button className="m-rm" onClick={() => rmMember(i)}>✕</button>
-                  </div>
-                ))}
-                <div className="add-zone">
-                  <div className="add-zone-label">// ADD_MEMBER</div>
-                  <div className="field-group" style={{ marginBottom: '10px' }}>
-                    <input className="field-input" placeholder="Full name" value={nm.name} onChange={e => setNm({...nm, name: e.target.value})} />
-                  </div>
-                  <div className="two-col" style={{ marginBottom: '10px' }}>
-                    <input className="field-input" placeholder="Email address" value={nm.email} onChange={e => setNm({...nm, email: e.target.value})} />
-                    <select className="field-select" value={nm.role} onChange={e => setNm({...nm, role: e.target.value})}>
-                      {['developer', 'admin', 'viewer', 'devops', 'security'].map(r => (
-                        <option key={r} value={r}>{r}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <button className="btn-add" onClick={addMember}>+ add member</button>
+            {step === 2 && (
+              <div className="success-box">
+                <span className="s-glyph">▶_</span>
+                <div className="s-title">system <em>online</em>.</div>
+                <div className="s-sub">// initializing nexus-x runtime...<br />// all systems nominal. ready to launch.</div>
+                <div className="module-tags" style={{marginBottom: 32}}>
+                  {['graph-engine', 'ai-scoring', type === 'enterprise' ? 'company-dashboard' : 'solo-dashboard', 'project-tree'].map(m => (
+                    <span key={m} className="mod-tag on">{m}</span>
+                  ))}
                 </div>
-                <button className="btn-primary" onClick={next}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
-                  {ent.members.length > 0 ? `launch workspace (${ent.members.length})` : ' skip & launch'}
+                <button className="btn-primary" onClick={handleLaunchClick} style={{marginBottom: '10px'}}>
+                  launch nexus dashboard
                 </button>
-              </>
+                <button className="btn-secondary" onClick={restart}>← restart.sh</button>
+              </div>
             )}
-
-            {step === 2 && type === 'individual' && (
-              <SuccessBox name={ind.name} isEnt={false} restart={restart} />
-            )}
-
-            {step === 3 && type === 'enterprise' && (
-              <SuccessBox name={ent.name} isEnt={true} memberCount={ent.members.length} restart={restart} />
-            )}
+            
           </div>
         </div>
       </div>
-    </div>
-  );
-};
-
-const SuccessBox = ({ name, isEnt, restart, memberCount = 0 }: any) => {
-  const firstName = name.split(' ')[0] || 'developer';
-  const mods = ['graph-engine', 'ai-scoring', 'sentry-link', 'lang-agents', isEnt ? 'team-sync' : 'solo-mode', 'mcp-tools'];
-
-  return (
-    <div className="success-box">
-      <span className="s-glyph">▶_</span>
-      <div className="s-title">system <em>online</em>, {firstName}.</div>
-      <div className="s-sub">// initializing nexus-x runtime...<br />// all systems nominal. welcome.</div>
-      <div className="module-tags">
-        {mods.map(m => <span key={m} className="mod-tag on">{m}</span>)}
-      </div>
-      {isEnt && memberCount > 0 ? (
-        <div style={{ fontSize: '11px', fontFamily: "'JetBrains Mono', monospace", color: 'var(--text2)', marginBottom: '16px' }}>
-          ✓ invites queued for {memberCount} member{memberCount > 1 ? 's' : ''}
-        </div>
-      ) : ''}
-      <button className="btn-secondary" onClick={restart}>← restart.sh</button>
     </div>
   );
 };

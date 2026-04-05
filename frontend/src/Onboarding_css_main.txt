@@ -1,28 +1,17 @@
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Epilogue:wght@400;500;600;700;800;900&display=swap');
+﻿@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Epilogue:wght@400;500;600;700;800;900&display=swap');
 
-*{
-  box-sizing:border-box;
-  margin:0;
-  padding:0;
-  -ms-overflow-style: none; /* IE and Edge */
-  scrollbar-width: none; /* Firefox */
-}
+*{box-sizing:border-box;margin:0;padding:0}
 
-*::-webkit-scrollbar {
-  display: none; /* Chrome, Safari and Opera */
-}
 :root{
   --transition:0.35s cubic-bezier(0.4,0,0.2,1);
 }
 
 .nx-root{
-  display: flex;
-  align-items: center;
-  justify-content: center;
   min-height:100vh;
   font-family:'Epilogue',sans-serif;
   position:relative;
-  overflow:hidden;
+  overflow-x:hidden;
+  overflow-y:auto;
   transition:background var(--transition), color var(--transition);
 }
 
@@ -64,15 +53,7 @@
   --cursor:#1a7f37;
 }
 
-body{
-  background:transparent;
-  overflow:hidden;
-  -ms-overflow-style: none;
-  scrollbar-width: none;
-}
-body::-webkit-scrollbar {
-  display: none;
-}
+body{background:transparent}
 
 .nx-bg{
   position:absolute;inset:0;
@@ -85,10 +66,10 @@ body::-webkit-scrollbar {
   position:relative;z-index:10;
   display:flex;flex-direction:column;align-items:center;
   justify-content:center;
-  width: 100%;
+  min-height:100vh;
   padding:24px 20px 32px;
-  /* A subtle 15% zoom that fits better */
-  transform: scale(1.15);
+  /* INCREASED SIZE FOR THE ENTIRE UI */
+  transform: scale(1.3);
 }
 
 .theme-toggle{
@@ -401,7 +382,7 @@ body::-webkit-scrollbar {
 .btn-add:hover{background:rgba(var(--accent-rgb),0.18);}
 
 .dots{display:flex;gap:6px;justify-content:center;margin-bottom:24px;}
-.dot-step{width:6px;height:6px;border-radius:3px;background:var(--text3);transition:all 0.3s;}
+.dot-step{width:6px;height:6px;border-radius:3px;background:var(--border);transition:all 0.3s;}
 .dot-step.active{width:18px;background:var(--accent);}
 .dot-step.done{background:var(--accent)44;}
 
