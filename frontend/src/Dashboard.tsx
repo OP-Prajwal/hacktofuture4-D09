@@ -159,18 +159,45 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                     <p>{p.description || '// no description provided'}</p>
                   </div>
 
-                  <div className="clone-box custom-doc-box">
-                    <div className="clone-label">→ CONNECT REPOSITORY via CLI</div>
-                    <div className="terminal-block">
-                      <div className="term-line"><span className="term-prompt">$</span> npm i -g nexus-x-cli</div>
-                      <div className="term-line"><span className="term-prompt">$</span> nexus init</div>
-                      <div className="term-line term-line-interactive">
-                        <span><span className="term-prompt">$</span> nexus remote {p.cloneCode}</span>
-                        <button className="clone-copy inline-copy" onClick={() => navigator.clipboard.writeText(`nexus remote ${p.cloneCode}`)}>
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                        </button>
+                  <div className="setup-documentation-wrapper">
+                    <div className="setup-header">
+                      <h3>📚 Quick Setup Guide</h3>
+                      <p>To integrate your local repository with this NEXUS-X workspace and unlock structural code intelligence, follow the steps below.</p>
+                    </div>
+                    
+                    <div className="doc-grid">
+                      <div className="doc-card">
+                        <div className="doc-step-badge">1</div>
+                        <h4>Install Global CLI</h4>
+                        <p>NEXUS-X uses a seamless local CLI agent to parse your graph.</p>
+                        <div className="terminal-block">
+                          <div className="term-line"><span className="term-prompt">$</span> npm i -g nexus-x-cli</div>
+                        </div>
                       </div>
-                      <div className="term-line"><span className="term-prompt">$</span> nexus push</div>
+
+                      <div className="doc-card">
+                        <div className="doc-step-badge">2</div>
+                        <h4>Initialize Workspace</h4>
+                        <p>Run these inside your codebase to bootstrap the platform.</p>
+                        <div className="terminal-block">
+                          <div className="term-line"><span className="term-prompt">$</span> nexus init</div>
+                        </div>
+                      </div>
+
+                      <div className="doc-card full-span">
+                        <div className="doc-step-badge">3</div>
+                        <h4>Connect Origin & Push Knowledge Graph</h4>
+                        <p>Link your local setup directly to this remote workspace identity and sync the data.</p>
+                        <div className="terminal-block">
+                          <div className="term-line term-line-interactive">
+                            <span><span className="term-prompt">$</span> nexus remote {p.cloneCode}</span>
+                            <button className="clone-copy inline-copy" onClick={() => navigator.clipboard.writeText(`nexus remote ${p.cloneCode}`)} title="Copy remote command">
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                            </button>
+                          </div>
+                          <div className="term-line"><span className="term-prompt">$</span> nexus push</div>
+                        </div>
+                      </div>
                     </div>
                   </div>
                   
