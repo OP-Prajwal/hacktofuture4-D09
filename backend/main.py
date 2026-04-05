@@ -1,11 +1,12 @@
-from fastapi import FastAPI, HTTPException, Body
+import json
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
 from db.mongo import mongo
 from db.neo4j_db import neo4j_db
 from services.project_service import ProjectPushRequest, build_project_graph_from_payload
-from services.blob_service import has_blob, store_blob_chunk, finalize_blob, is_text_file
+from services.blob_service import has_blob, stream_blob_to_gridfs, get_blob_info, is_text_file
 from services.commit_service import create_commit, get_commits
 
 app = FastAPI(title="NEXUS-X Backend", version="1.0.0")
@@ -30,79 +31,68 @@ def push_project(workspace: str, project_name: str, payload: ProjectPushRequest)
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ─── Git-like Blob Transfer ───────────────────────────────────────────────────
+# ─── Git-like streaming blob transfer ────────────────────────────────────────
 
 class PreflightRequest(BaseModel):
-    hashes: List[str]  # SHA-256 hashes of all files the client wants to push
+    hashes: List[str]
 
 class PreflightResponse(BaseModel):
-    missing: List[str]  # Hashes the server does NOT already have
+    missing: List[str]
 
 
 @app.post("/api/repo/{workspace}/{project_name}/preflight",
           response_model=PreflightResponse)
 def preflight(workspace: str, project_name: str, body: PreflightRequest):
     """
-    Client sends all file hashes it intends to push.
-    Server responds with only the hashes it doesn't already have stored.
-    This is the delta-check — like 'git push' skipping already-known objects.
+    Delta check — client sends all intended hashes, server returns only
+    the ones it doesn't already have in GridFS.
+    Equivalent to git's 'have/want' negotiation.
     """
     missing = [h for h in body.hashes if not has_blob(h)]
     return {"missing": missing}
 
 
-class BlobChunkBody(BaseModel):
-    data: str          # base64-encoded chunk content
-    total_chunks: int  # total number of chunks for this blob
-
-
-@app.post("/api/repo/{workspace}/{project_name}/blob/{file_hash}/chunk/{chunk_index}")
-def upload_blob_chunk(
+@app.post("/api/repo/{workspace}/{project_name}/blob/{file_hash}")
+async def upload_blob_stream(
     workspace: str,
     project_name: str,
     file_hash: str,
-    chunk_index: int,
-    body: BlobChunkBody
+    request: Request
 ):
     """
-    Receives one chunk of a file blob.
-    Chunks are stored temporarily until finalize is called.
+    True binary streaming upload.
+    
+    The CLI sends raw file bytes via HTTP chunked-transfer-encoding.
+    This endpoint reads the stream iteratively and writes each chunk
+    directly into MongoDB GridFS — nothing is buffered in full memory.
+    
+    File metadata is passed via X-Nexus-Meta header as JSON.
     """
+    # Skip if already stored (idempotent)
+    if has_blob(file_hash):
+        return {"status": "exists", "hash": file_hash}
+
+    # Parse metadata from request header
+    meta_raw = request.headers.get("x-nexus-meta", "{}")
     try:
-        store_blob_chunk(file_hash, chunk_index, body.data, body.total_chunks)
-        return {"status": "ok", "hash": file_hash, "chunk": chunk_index}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        meta = json.loads(meta_raw)
+    except json.JSONDecodeError:
+        meta = {}
 
-
-class BlobFinalizeBody(BaseModel):
-    total_chunks: int
-    size: int
-    extension: str
-    name: str
-
-
-@app.post("/api/repo/{workspace}/{project_name}/blob/{file_hash}/finalize")
-def finalize_blob_upload(
-    workspace: str,
-    project_name: str,
-    file_hash: str,
-    body: BlobFinalizeBody
-):
-    """
-    Assembles stored chunks into a complete blob document in MongoDB.
-    """
     try:
-        finalize_blob(file_hash, body.total_chunks, {
-            "size": body.size,
-            "extension": body.extension,
-            "name": body.name
-        })
+        await stream_blob_to_gridfs(file_hash, request.stream(), meta)
         return {"status": "stored", "hash": file_hash}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/repo/{workspace}/{project_name}/blob/{file_hash}")
+def get_blob(workspace: str, project_name: str, file_hash: str):
+    """Returns metadata for a stored blob (no content)."""
+    info = get_blob_info(file_hash)
+    if not info:
+        raise HTTPException(status_code=404, detail="Blob not found")
+    return info
 
 
 class ManifestFile(BaseModel):
@@ -120,7 +110,7 @@ class CommitBody(BaseModel):
 def push_commit(workspace: str, project_name: str, body: CommitBody):
     """
     Creates a commit (snapshot) record in MongoDB.
-    This is the final step of `nexus push` — like 'git commit' after staging.
+    Final step of `nexus push` — records which hashes make up this snapshot.
     """
     try:
         manifest_dicts = [f.model_dump() for f in body.manifest]
@@ -136,11 +126,10 @@ def push_commit(workspace: str, project_name: str, body: CommitBody):
 
 @app.get("/api/repo/{workspace}/{project_name}/commits")
 def list_commits(workspace: str, project_name: str, limit: int = 20):
-    """Returns recent push history for a project."""
     return {"commits": get_commits(workspace, project_name, limit)}
 
 
-# ─── Test routes ─────────────────────────────────────────────────────────────
+# ─── Health / test routes ─────────────────────────────────────────────────────
 
 @app.get("/test-mongo")
 def test_mongo():
