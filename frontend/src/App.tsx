@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Routes, Route, useNavigate, Navigate } from 'react-router-dom';
 import Onboarding from './Onboarding';
 import Dashboard from './Dashboard';
 
@@ -12,24 +13,33 @@ export interface UserSession {
 }
 
 const App = () => {
-  const [view, setView] = useState<'onboarding' | 'dashboard'>('onboarding');
   const [session, setSession] = useState<UserSession | null>(null);
+  const navigate = useNavigate();
 
   const handleLaunch = (data: UserSession) => {
     setSession(data);
-    setView('dashboard');
+    navigate('/dashboard');
+  };
+
+  const handleLogout = () => {
+    setSession(null);
+    navigate('/');
   };
 
   return (
-    <>
-      {view === 'onboarding' && <Onboarding onLaunch={handleLaunch} />}
-      {view === 'dashboard' && session && (
-        <Dashboard 
-          session={session} 
-          onLogout={() => { setView('onboarding'); setSession(null); }} 
-        />
-      )}
-    </>
+    <Routes>
+      <Route path="/" element={<Onboarding onLaunch={handleLaunch} />} />
+      <Route 
+        path="/dashboard" 
+        element={
+          session ? (
+            <Dashboard session={session} onLogout={handleLogout} />
+          ) : (
+            <Navigate to="/" replace />
+          )
+        } 
+      />
+    </Routes>
   );
 }
 
