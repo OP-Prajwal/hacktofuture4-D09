@@ -1,28 +1,101 @@
 import { useState } from 'react';
 import './Onboarding.css';
 
+import { UserSession } from '../../App';
+
 interface OnboardingProps {
-  onLaunch: (data: any) => void;
+  onLaunch: (data: UserSession) => void;
 }
+
+const BACKEND = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
 
 const Onboarding = ({ onLaunch }: OnboardingProps) => {
   const [theme, setTheme] = useState('dark');
+  const [mode, setMode] = useState<'intro' | 'register' | 'login'>('intro');
   const [step, setStep] = useState(0);
   const [type, setType] = useState<string | null>(null);
   
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+
   // Data stores
-  const [ind, setInd] = useState({ name: '', email: '', role: '' });
-  const [ent, setEnt] = useState({ company: '', name: '', email: '', phone: '' });
+  const [ind, setInd] = useState({ name: '', email: '', role: '', password: '' });
+  const [ent, setEnt] = useState({ company: '', name: '', email: '', role: 'admin', password: '' });
+  const [loginForm, setLoginForm] = useState({ email: '', password: '' });
 
   const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
 
+  const doRegister = async () => {
+    setLoading(true);
+    setErrorMsg('');
+    try {
+      const payload = type === 'enterprise' ? {
+        type: 'enterprise',
+        name: ent.name,
+        email: ent.email,
+        password: ent.password,
+        company: ent.company,
+        role: ent.role
+      } : {
+        type: 'individual',
+        name: ind.name,
+        email: ind.email,
+        password: ind.password,
+        company: '',
+        role: ind.role
+      };
+
+      const res = await fetch(`${BACKEND}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Registration failed');
+      
+      onLaunch({ ...data.user, token: data.access_token });
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setErrorMsg(err.message);
+      } else {
+        setErrorMsg('An unknown error occurred');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const doLogin = async () => {
+    setLoading(true);
+    setErrorMsg('');
+    try {
+      const res = await fetch(`${BACKEND}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(loginForm)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Login failed');
+
+      onLaunch({ ...data.user, token: data.access_token });
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setErrorMsg(err.message);
+      } else {
+        setErrorMsg('An unknown error occurred');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const next = () => {
     if (step === 0 && !type) return;
-    if (step === 1 && type === 'individual' && !(ind.name && ind.email && ind.role)) return;
-    if (step === 1 && type === 'enterprise' && !(ent.company && ent.name && ent.email && ent.phone)) return;
-    // Enterprise: skip success screen, go straight to dashboard
-    if (step === 1 && type === 'enterprise') {
-      onLaunch({ type: 'enterprise', name: ent.name, email: ent.email, phone: ent.phone, company: ent.company, role: 'admin' });
+    if (step === 1 && type === 'individual' && !(ind.name && ind.email && ind.role && ind.password)) return;
+    if (step === 1 && type === 'enterprise' && !(ent.company && ent.name && ent.email && ent.password)) return;
+    
+    if (step === 1) {
+      doRegister();
       return;
     }
     setStep(step + 1);
@@ -30,26 +103,14 @@ const Onboarding = ({ onLaunch }: OnboardingProps) => {
 
   const back = () => {
     if (step > 0) setStep(step - 1);
-  };
-
-  const restart = () => {
-    setStep(0); setType(null);
-    setInd({ name: '', email: '', role: '' });
-    setEnt({ company: '', name: '', email: '', phone: '' });
-  };
-
-  const handleLaunchClick = () => {
-    if (type === 'enterprise') {
-      onLaunch({ type, name: ent.name, email: ent.email, company: ent.company, role: 'admin' });
-    } else {
-      onLaunch({ type, name: ind.name, email: ind.email, company: '', role: ind.role });
-    }
+    else setMode('intro');
   };
 
   const renderDots = () => {
-    const total = 3; // (Type -> Details -> Success)
+    if (mode === 'login' || mode === 'intro') return null;
+    const total = 2;
     return (
-      <div className="dots">
+      <div className="dots" style={{ marginBottom: 20 }}>
         {Array.from({ length: total }).map((_, i) => (
           <div key={i} className={`dot-step ${i < step ? 'done' : i === step ? 'active' : ''}`}></div>
         ))}
@@ -80,11 +141,56 @@ const Onboarding = ({ onLaunch }: OnboardingProps) => {
 
         <div style={{ width: '100%', maxWidth: '480px' }}>
           <div className="card">
-            {step === 0 && (
+            
+            {mode === 'intro' && (
               <>
+                <div className="prompt-line"><span className="ps">nexus@system:~$</span> <span className="cmd">auth --init</span><span className="terminal-cursor"></span></div>
+                <div className="card-title">Welcome to <em>NEXUS-X</em></div>
+                <div className="card-sub">// Identify yourself to access the platform</div>
+                
+                <div style={{ height: '20px' }}></div>
+                
+                <button className="btn-primary" onClick={() => { setMode('login'); setErrorMsg(''); }}>
+                  Login to existing Workspace
+                </button>
+                <div style={{ textAlign: 'center', margin: '15px 0', color: 'var(--text3)' }}>— or —</div>
+                <button className="btn-secondary" onClick={() => { setMode('register'); setStep(0); setErrorMsg(''); }}>
+                  Create new Workspace
+                </button>
+              </>
+            )}
+
+            {mode === 'login' && (
+              <>
+                <button className="back-btn" onClick={back}>← cd ..</button>
+                <div className="prompt-line"><span className="ps">nexus@auth:~$</span> <span className="cmd">login</span><span className="terminal-cursor"></span></div>
+                <div className="card-title">Authenticate</div>
+                <div className="card-sub">// Enter your credentials</div>
+                
+                {errorMsg && <div className="error-banner">{errorMsg}</div>}
+
+                <div className="field-group mt-4">
+                  <div className="field-label"><span className="req">→</span> EMAIL</div>
+                  <input type="email" className="field-input" placeholder="you@domain.com" value={loginForm.email} onChange={e => setLoginForm({...loginForm, email: e.target.value})} />
+                </div>
+                <div className="field-group">
+                  <div className="field-label"><span className="req">→</span> PASSWORD</div>
+                  <input type="password" className="field-input" placeholder="••••••••" value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} />
+                </div>
+                
+                <button className="btn-primary mt-4" onClick={doLogin} disabled={!loginForm.email || !loginForm.password || loading}>
+                  {loading ? 'Authenticating...' : 'Login'}
+                </button>
+              </>
+            )}
+
+            {mode === 'register' && step === 0 && (
+              <>
+                <button className="back-btn" onClick={back}>← cd ..</button>
                 <div className="prompt-line"><span className="ps">nexus@init:~$</span> <span className="cmd">select --workspace-type</span><span className="terminal-cursor"></span></div>
                 <div className="card-title">Who's <em>building</em>?</div>
                 <div className="card-sub">// choose your environment type to continue</div>
+                
                 <div className="type-grid">
                   <button className={`type-btn t-ind ${type === 'individual' ? 'sel' : ''}`} onClick={() => setType('individual')}>
                     <div className="sel-dot">✓</div>
@@ -101,26 +207,27 @@ const Onboarding = ({ onLaunch }: OnboardingProps) => {
                 </div>
                 <div style={{ height: '20px' }}></div>
                 <button className="btn-primary" onClick={next} disabled={!type}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
                   continue
                 </button>
               </>
             )}
 
-            {step === 1 && type === 'individual' && (
+            {mode === 'register' && step === 1 && type === 'individual' && (
               <>
                 <button className="back-btn" onClick={back}>← cd ..</button>
-                <div className="prompt-line"><span className="ps">nexus@setup:~$</span> <span className="cmd">config --user</span><span className="terminal-cursor"></span></div>
+                <div className="prompt-line"><span className="ps">nexus@setup:~$</span> <span className="cmd">config --user</span></div>
                 <div className="card-title">Your <em>profile</em></div>
-                <div className="card-sub">// identity used across sessions & reports</div>
+                <div className="card-sub">// identity used across sessions</div>
                 
-                <div className="field-group">
+                {errorMsg && <div className="error-banner">{errorMsg}</div>}
+
+                <div className="field-group mt-3">
                   <div className="field-label"><span className="req">→</span> FULL_NAME</div>
                   <input className="field-input" placeholder="e.g. Arjun Mehta" value={ind.name} onChange={e => setInd({...ind, name: e.target.value})} />
                 </div>
                 <div className="field-group">
                   <div className="field-label"><span className="req">→</span> EMAIL</div>
-                  <input className="field-input" placeholder="you@domain.com" value={ind.email} onChange={e => setInd({...ind, email: e.target.value})} />
+                  <input type="email" className="field-input" placeholder="you@domain.com" value={ind.email} onChange={e => setInd({...ind, email: e.target.value})} />
                 </div>
                 <div className="field-group">
                   <div className="field-label"><span className="req">→</span> ROLE</div>
@@ -131,22 +238,27 @@ const Onboarding = ({ onLaunch }: OnboardingProps) => {
                     ))}
                   </select>
                 </div>
+                <div className="field-group">
+                  <div className="field-label"><span className="req">→</span> PASSWORD</div>
+                  <input type="password" className="field-input" placeholder="••••••••" value={ind.password} onChange={e => setInd({...ind, password: e.target.value})} />
+                </div>
                 
-                <button className="btn-primary" onClick={next} disabled={!(ind.name && ind.email && ind.role)}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
-                  finalize setup
+                <button className="btn-primary" onClick={next} disabled={!(ind.name && ind.email && ind.role && ind.password) || loading}>
+                  {loading ? 'Registering...' : 'finalize setup'}
                 </button>
               </>
             )}
 
-            {step === 1 && type === 'enterprise' && (
+            {mode === 'register' && step === 1 && type === 'enterprise' && (
               <>
                 <button className="back-btn" onClick={back}>← cd ..</button>
-                <div className="prompt-line"><span className="ps">nexus@setup:~$</span> <span className="cmd">config --org</span><span className="terminal-cursor"></span></div>
+                <div className="prompt-line"><span className="ps">nexus@setup:~$</span> <span className="cmd">config --org</span></div>
                 <div className="card-title">Enterprise <em>setup</em></div>
                 <div className="card-sub">// configure company domain and identity</div>
                 
-                <div className="field-group">
+                {errorMsg && <div className="error-banner">{errorMsg}</div>}
+
+                <div className="field-group mt-3">
                   <div className="field-label"><span className="req">→</span> COMPANY_NAME</div>
                   <input className="field-input" placeholder="e.g. Acme Corp" value={ent.company} onChange={e => setEnt({...ent, company: e.target.value})} />
                 </div>
@@ -157,36 +269,18 @@ const Onboarding = ({ onLaunch }: OnboardingProps) => {
                   </div>
                   <div className="field-group">
                     <div className="field-label"><span className="req">→</span> YOUR_EMAIL</div>
-                    <input className="field-input" placeholder="priya@acme.com" value={ent.email} onChange={e => setEnt({...ent, email: e.target.value})} />
+                    <input type="email" className="field-input" placeholder="priya@acme.com" value={ent.email} onChange={e => setEnt({...ent, email: e.target.value})} />
                   </div>
                 </div>
                 <div className="field-group">
-                  <div className="field-label"><span className="req">→</span> PHONE_NUMBER</div>
-                  <input className="field-input" placeholder="+91 98765 43210" value={ent.phone} onChange={e => setEnt({...ent, phone: e.target.value})} />
+                  <div className="field-label"><span className="req">→</span> PASSWORD</div>
+                  <input type="password" className="field-input" placeholder="••••••••" value={ent.password} onChange={e => setEnt({...ent, password: e.target.value})} />
                 </div>
                 
-                <button className="btn-primary" onClick={next} disabled={!(ent.company && ent.name && ent.email && ent.phone)}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
-                  launch dashboard
+                <button className="btn-primary" onClick={next} disabled={!(ent.company && ent.name && ent.email && ent.password) || loading}>
+                  {loading ? 'Deploying...' : 'deploy workspace'}
                 </button>
               </>
-            )}
-
-            {step === 2 && (
-              <div className="success-box">
-                <span className="s-glyph">▶_</span>
-                <div className="s-title">system <em>online</em>.</div>
-                <div className="s-sub">// initializing nexus-x runtime...<br />// all systems nominal. ready to launch.</div>
-                <div className="module-tags" style={{marginBottom: 32}}>
-                  {['graph-engine', 'ai-scoring', type === 'enterprise' ? 'company-dashboard' : 'solo-dashboard', 'project-tree'].map(m => (
-                    <span key={m} className="mod-tag on">{m}</span>
-                  ))}
-                </div>
-                <button className="btn-primary" onClick={handleLaunchClick} style={{marginBottom: '10px'}}>
-                  launch nexus dashboard
-                </button>
-                <button className="btn-secondary" onClick={restart}>← restart.sh</button>
-              </div>
             )}
             
           </div>

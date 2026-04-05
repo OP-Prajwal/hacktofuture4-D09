@@ -1,13 +1,16 @@
 import json
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 from db.mongo import mongo
 from db.neo4j_db import neo4j_db
 from services.project_service import ProjectPushRequest, build_project_graph_from_payload
 from services.blob_service import has_blob, stream_blob_to_gridfs, get_blob_info, is_text_file
 from services.commit_service import create_commit, get_commits, get_latest_tree
+from services.auth_service import register_user, login_user, decode_access_token
+from services.project_db_service import create_project, get_workspace_projects, add_project_member, remove_project_member
 
 app = FastAPI(title="NEXUS-X Backend", version="1.0.0")
 
@@ -18,6 +21,81 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+security = HTTPBearer()
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
+    payload = decode_access_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return payload
+
+# ─── Auth Routes ─────────────────────────────────────────────────────────────
+
+class RegisterRequest(BaseModel):
+    type: str # individual or enterprise
+    name: str # user name
+    email: str
+    password: str
+    company: str = "" # only used if type == enterprise
+    role: str = "admin"
+
+@app.post("/api/auth/register")
+def register(body: RegisterRequest):
+    try:
+        res = register_user(body.type, body.email, body.password, body.name, body.company, body.role)
+        return res
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+@app.post("/api/auth/login")
+def login(body: LoginRequest):
+    try:
+        res = login_user(body.email, body.password)
+        return res
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+# ─── DB Project Routes ───────────────────────────────────────────────────────
+
+class CreateProjectRequest(BaseModel):
+    name: str
+    description: str
+
+@app.post("/api/workspaces/{workspace_slug}/projects")
+def add_project(workspace_slug: str, body: CreateProjectRequest, current_user: dict = Depends(get_current_user)):
+    if current_user.get("workspace") != workspace_slug:
+        raise HTTPException(status_code=403, detail="Not authorized for this workspace")
+    project = create_project(workspace_slug, body.name, body.description)
+    return project
+
+@app.get("/api/workspaces/{workspace_slug}/projects")
+def get_projects(workspace_slug: str, current_user: dict = Depends(get_current_user)):
+    if current_user.get("workspace") != workspace_slug:
+        raise HTTPException(status_code=403, detail="Not authorized for this workspace")
+    return get_workspace_projects(workspace_slug)
+
+class AddMemberRequest(BaseModel):
+    name: str
+    email: str
+    role: str
+
+@app.post("/api/workspaces/{workspace_slug}/projects/{project_id}/members")
+def add_member(workspace_slug: str, project_id: str, body: AddMemberRequest, current_user: dict = Depends(get_current_user)):
+    add_project_member(workspace_slug, project_id, body.name, body.email, body.role)
+    return {"status": "ok"}
+
+@app.delete("/api/workspaces/{workspace_slug}/projects/{project_id}/members/{email}")
+def remove_member(workspace_slug: str, project_id: str, email: str, current_user: dict = Depends(get_current_user)):
+    remove_project_member(workspace_slug, project_id, email)
+    return {"status": "ok"}
 
 
 # ─── Existing graph push ──────────────────────────────────────────────────────

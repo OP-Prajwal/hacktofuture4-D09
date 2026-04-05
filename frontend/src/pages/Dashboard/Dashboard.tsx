@@ -43,9 +43,6 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
   const isEnterprise = session.type === 'enterprise';
   const orgName = isEnterprise ? session.company : `${session.name}'s Workspace`;
 
-  const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
-  const genHex = () => Math.random().toString(16).slice(2, 8);
-
   // Fetch file tree when project is selected
   const fetchTree = useCallback(async (cloneCode: string) => {
     setTreeLoading(true);
@@ -67,6 +64,25 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
     }
   }, []);
 
+  // Fetch projects initially
+  const loadProjects = useCallback(async () => {
+    try {
+      const res = await fetch(`${BACKEND}/api/workspaces/${session.workspace}/projects`, {
+        headers: { 'Authorization': `Bearer ${session.token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setProjects(data);
+      }
+    } catch (e) {
+      console.error("Failed to load projects", e);
+    }
+  }, [session.workspace, session.token]);
+
+  useEffect(() => {
+    loadProjects();
+  }, [loadProjects]);
+
   // When active project changes, load tree
   useEffect(() => {
     if (!activeProject) return;
@@ -74,39 +90,68 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
     if (p) fetchTree(p.cloneCode);
   }, [activeProject, projects, fetchTree]);
 
-  const handleCreateProject = () => {
+  const handleCreateProject = async () => {
     if (!newProj.name.trim()) return;
-    const slug = `${slugify(orgName)}/${slugify(newProj.name)}-${genHex()}`;
-    const project: Project = {
-      id: Date.now().toString(),
-      name: newProj.name,
-      description: newProj.description,
-      cloneCode: slug,
-      members: []
-    };
-    setProjects([...projects, project]);
-    setNewProj({ name: '', description: '' });
-    setShowNewProj(false);
-  };
-
-  const handleAddMember = (projectId: string) => {
-    if (!newMem.name.trim() || !newMem.email.trim()) return;
-    setProjects(projects.map(p => {
-      if (p.id === projectId) return { ...p, members: [...p.members, { ...newMem }] };
-      return p;
-    }));
-    setNewMem({ name: '', email: '', role: 'developer' });
-  };
-
-  const removeMember = (projectId: string, memberIndex: number) => {
-    setProjects(projects.map(p => {
-      if (p.id === projectId) {
-        const updatedMembers = [...p.members];
-        updatedMembers.splice(memberIndex, 1);
-        return { ...p, members: updatedMembers };
+    try {
+      const res = await fetch(`${BACKEND}/api/workspaces/${session.workspace}/projects`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.token}` 
+        },
+        body: JSON.stringify({ name: newProj.name, description: newProj.description })
+      });
+      if (res.ok) {
+        const createdProject = await res.json();
+        setProjects([createdProject, ...projects]);
+        setNewProj({ name: '', description: '' });
+        setShowNewProj(false);
       }
-      return p;
-    }));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleAddMember = async (projectId: string) => {
+    if (!newMem.name.trim() || !newMem.email.trim()) return;
+    try {
+      const res = await fetch(`${BACKEND}/api/workspaces/${session.workspace}/projects/${projectId}/members`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.token}` 
+        },
+        body: JSON.stringify(newMem)
+      });
+      if (res.ok) {
+        setProjects(projects.map(p => {
+          if (p.id === projectId) return { ...p, members: [...p.members, { ...newMem }] };
+          return p;
+        }));
+        setNewMem({ name: '', email: '', role: 'developer' });
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const removeMember = async (projectId: string, memberEmail: string) => {
+    try {
+      const res = await fetch(`${BACKEND}/api/workspaces/${session.workspace}/projects/${projectId}/members/${memberEmail}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${session.token}` }
+      });
+      if (res.ok) {
+        setProjects(projects.map(p => {
+          if (p.id === projectId) {
+            return { ...p, members: p.members.filter(m => m.email !== memberEmail) };
+          }
+          return p;
+        }));
+      }
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   return (
@@ -260,7 +305,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                               <div className="m-e">{m.email}</div>
                             </div>
                             <div className={`m-badge r-${m.role}`}>{m.role}</div>
-                            <button className="m-del" onClick={() => removeMember(p.id, idx)}>✕</button>
+                            <button className="m-del" onClick={() => removeMember(p.id, m.email)}>✕</button>
                           </div>
                         ))
                       )}

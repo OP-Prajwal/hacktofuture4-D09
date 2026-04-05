@@ -10,6 +10,8 @@ export interface UserSession {
   phone?: string;
   company: string;
   role: string;
+  workspace: string;
+  token: string;
 }
 
 const App = () => {
