@@ -11,6 +11,7 @@ from services.blob_service import has_blob, stream_blob_to_gridfs, get_blob_info
 from services.commit_service import create_commit, get_commits, get_latest_tree
 from services.auth_service import register_user, login_user, decode_access_token
 from services.project_db_service import create_project, get_workspace_projects, add_project_member, remove_project_member
+from services.cig import analyze_repository, get_project_graph, ask_repository
 
 app = FastAPI(title="NEXUS-X Backend", version="1.0.0")
 
@@ -228,6 +229,47 @@ def get_file_tree(workspace: str, project_name: str):
         return {"status": "no_push", "tree": None}
     return {"status": "ok", **tree}
 
+
+# ─── Code Intelligence Graph (CIG) Routes ────────────────────────────────────
+
+class AnalyzeRequest(BaseModel):
+    local_path: Optional[str] = None
+
+@app.post("/api/repo/{workspace}/{project_name}/analyze")
+def analyze_project(workspace: str, project_name: str, body: AnalyzeRequest = None):
+    """
+    Trigger full CIG analysis using GitNexus.
+    Optionally pass { "local_path": "C:/path/to/repo" } to specify the repo location.
+    """
+    try:
+        local_path = body.local_path if body else None
+        result = analyze_repository(workspace, project_name, local_path=local_path)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/repo/{workspace}/{project_name}/graph")
+def get_graph(workspace: str, project_name: str):
+    """Return the full knowledge graph as JSON for visualization."""
+    try:
+        result = get_project_graph(workspace, project_name)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class QueryRequest(BaseModel):
+    question: str
+
+@app.post("/api/repo/{workspace}/{project_name}/query")
+def query_project(workspace: str, project_name: str, body: QueryRequest):
+    """Query the knowledge graph with natural language."""
+    try:
+        result = ask_repository(workspace, project_name, body.question)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ─── Health / test routes ─────────────────────────────────────────────────────
 

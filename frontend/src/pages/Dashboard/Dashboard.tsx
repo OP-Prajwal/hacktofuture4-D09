@@ -4,6 +4,7 @@ import type { UserSession } from '../../App';
 import FileTree, { type TreeData, type FileNode } from '../../components/FileTree/FileTree';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import CIGraph from '../../components/CIGraph/CIGraph';
 
 const BACKEND = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
 
@@ -66,6 +67,14 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
   // File Viewer state
   const [viewingFile, setViewingFile] = useState<{ node: FileNode, content: string | null, loading: boolean } | null>(null);
 
+  // Intelligence state
+  const [analyzing, setAnalyzing] = useState(false);
+  const [queryText, setQueryText] = useState("");
+  const [querying, setQuerying] = useState(false);
+  const [queryResult, setQueryResult] = useState<any>(null);
+  const [graphData, setGraphData] = useState<{ nodes: any[], links: any[] } | null>(null);
+  const [fullScreenGraph, setFullScreenGraph] = useState(false);
+
   const isEnterprise = session.type === 'enterprise';
   const orgName = isEnterprise ? session.company : `${session.name}'s Workspace`;
 
@@ -127,12 +136,32 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
     loadProjects();
   }, [loadProjects]);
 
-  // When active project changes, load tree
+  const fetchGraph = useCallback(async (cloneCode: string) => {
+    const [workspace, project] = cloneCode.split('/');
+    try {
+      const graphRes = await fetch(`${BACKEND}/api/repo/${workspace}/${project}/graph`);
+      if (graphRes.ok) {
+        const gData = await graphRes.json();
+        if (gData.status === 'ok') {
+          setGraphData({ nodes: gData.nodes || [], edges: gData.edges || [] });
+        } else {
+          setGraphData(null);
+        }
+      }
+    } catch {
+      setGraphData(null);
+    }
+  }, []);
+
+  // When active project changes, load tree and graph
   useEffect(() => {
     if (!activeProject) return;
     const p = projects.find(x => x.id === activeProject);
-    if (p) fetchTree(p.cloneCode);
-  }, [activeProject, projects, fetchTree]);
+    if (p) {
+      fetchTree(p.cloneCode);
+      fetchGraph(p.cloneCode);
+    }
+  }, [activeProject, projects, fetchTree, fetchGraph]);
 
   const handleCreateProject = async () => {
     if (!newProj.name.trim()) return;
@@ -198,8 +227,168 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
     }
   };
 
+  const handleAnalyze = async () => {
+    const localPath = prompt(
+      "Enter the local path to the repository:\n(e.g. C:\\Users\\me\\projects\\my-app)",
+      ""
+    );
+    if (localPath === null) return; // user cancelled
+
+    setAnalyzing(true);
+    try {
+      const p = projects.find(x => x.id === activeProject);
+      if (!p) return;
+      const [workspace, project] = p.cloneCode.split('/');
+      const res = await fetch(`${BACKEND}/api/repo/${workspace}/${project}/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ local_path: localPath || null })
+      });
+      if (res.ok) {
+        await fetchGraph(p.cloneCode);
+        setFullScreenGraph(true);
+      } else {
+        const err = await res.json().catch(() => null);
+        alert(`Analysis failed: ${err?.detail || 'Unknown error'}`);
+      }
+    } catch {
+      alert("Knowledge Graph analysis failed.");
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const handleQuery = async () => {
+    if (!queryText.trim()) return;
+    setQuerying(true);
+    setQueryResult(null);
+    try {
+      const p = projects.find(x => x.id === activeProject);
+      if (!p) return;
+      const [workspace, project] = p.cloneCode.split('/');
+      const res = await fetch(`${BACKEND}/api/repo/${workspace}/${project}/query`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: queryText })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setQueryResult(data);
+      } else {
+        setQueryResult({ answer: "Query failed: See console for details." });
+      }
+    } catch {
+      setQueryResult({ answer: "Error reaching the intelligence layer." });
+    } finally {
+      setQuerying(false);
+    }
+  };
+
   return (
     <div className="dash-root">
+      {/* Fullscreen Graph Overlay */}
+      {fullScreenGraph && graphData && activeProject && (
+        <div className="fullscreen-graph-overlay">
+          <header className="fg-header">
+            <div className="fg-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+              Knowledge Graph: <span>{projects.find(x => x.id === activeProject)?.name}</span>
+            </div>
+            <button className="btn-fg-close" onClick={() => setFullScreenGraph(false)} style={{background: 'var(--accent2)', color: '#fff', fontWeight: 'bold', border: 'none'}}>← Back to Dashboard</button>
+          </header>
+          <div className="fg-body">
+            <aside className="fg-sidebar">
+              <div className="fg-section">
+                <h4>Graph Statistics</h4>
+                <div className="fg-stats">
+                  <div className="fg-stat-card">
+                    <div className="fg-stat-val">{graphData.nodes.length}</div>
+                    <div className="fg-stat-lbl">Nodes</div>
+                  </div>
+                  <div className="fg-stat-card">
+                    <div className="fg-stat-val">{graphData.edges.length}</div>
+                    <div className="fg-stat-lbl">Edges</div>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="fg-section">
+                <h4>Quick Query</h4>
+                <div className="fg-query-box">
+                  <input 
+                    type="text" 
+                    className="dash-input" 
+                    placeholder="Ask repository..." 
+                    value={queryText}
+                    onChange={e => setQueryText(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleQuery()}
+                  />
+                  <button className="btn-fg-ask" onClick={handleQuery} disabled={querying}>
+                    {querying ? 'Thinking...' : 'Run Query'}
+                  </button>
+                </div>
+              </div>
+
+              {queryResult && (
+                <div className="fg-section">
+                  <h4>Query Result</h4>
+                  <div className="ic-result" style={{marginTop: 0}}>
+                    <div className="ic-answer">
+                      <p style={{fontSize: '12px', margin: 0}}>{queryResult.answer}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="fg-section">
+                <h4>Legend</h4>
+                <div className="fg-legend">
+                  <div className="lg-item"><span className="lg-dot" style={{background: '#39d353'}}></span> Module</div>
+                  <div className="lg-item"><span className="lg-dot" style={{background: '#58a6ff'}}></span> File</div>
+                  <div className="lg-item"><span className="lg-dot" style={{background: '#f78166'}}></span> Function</div>
+                  <div className="lg-item"><span className="lg-dot" style={{background: '#e3b341'}}></span> Class</div>
+                  <div className="lg-item"><span className="lg-line" style={{background: 'rgba(88, 166, 255, 0.6)'}}></span> Semantics (Imports/Calls)</div>
+                </div>
+              </div>
+
+              <div className="fg-section">
+                <h4>Functions Discovery</h4>
+                <div style={{ maxHeight: '300px', overflowY: 'auto', background: '#0d1117', borderRadius: '6px', padding: '8px', border: '1px solid #21262d' }}>
+                  {graphData.nodes.filter((n: any) => n.data.type === 'Function').length === 0 ? (
+                    <div style={{ fontSize: '11px', color: '#8b949e', padding: '10px' }}>No functions found.</div>
+                  ) : (
+                    graphData.nodes
+                      .filter((n: any) => n.data.type === 'Function')
+                      .sort((a: any, b: any) => b.data.blast_radius - a.data.blast_radius)
+                      .map((fn: any) => (
+                        <div key={fn.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 8px', borderBottom: '1px solid #21262d', fontSize: '11px' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', maxWidth: '70%' }}>
+                            <span style={{ color: '#e6edf3', fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fn.data.label}</span>
+                            <span style={{ color: '#8b949e', fontSize: '9px' }}>{fn.data.file}</span>
+                          </div>
+                          <span style={{ 
+                            background: fn.data.status === 'CRITICAL' ? 'rgba(248,81,73,0.1)' : 'rgba(56,139,253,0.1)',
+                            color: fn.data.status === 'CRITICAL' ? '#f85149' : '#388bfd',
+                            padding: '2px 6px',
+                            borderRadius: '10px',
+                            fontSize: '9px',
+                            fontWeight: 'bold'
+                          }}>
+                            {fn.data.blast_radius} conn
+                          </span>
+                        </div>
+                      ))
+                  )}
+                </div>
+              </div>
+            </aside>
+            <main className="fg-main">
+              <CIGraph graphData={graphData} />
+            </main>
+          </div>
+        </div>
+      )}
+
       {/* Top Navbar */}
       <nav className="dash-nav">
         <div className="nav-left">
@@ -269,6 +458,127 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                   <div className="proj-header">
                     <h2>{p.name}</h2>
                     <p>{p.description || '// no description provided'}</p>
+                  </div>
+
+                  {/* ── Intelligence Center ── */}
+                  <div className="intelligence-center">
+                    <div className="section-title">
+                      <h3>🧠 Intelligence Layer</h3>
+                    </div>
+                    
+                    <div className="ic-card">
+                      <div className="ic-header">
+                        <div>
+                          <h4>Structural Analysis</h4>
+                          <p>Analyze your repository to build a comprehensive knowledge graph of functions and dependencies.</p>
+                        </div>
+                        <button className="btn-dash-primary" onClick={handleAnalyze} disabled={analyzing}>
+                          {analyzing ? 'Analyzing...' : 'Create Graph'}
+                        </button>
+                      </div>
+
+                      <div className="ic-query">
+                        <input
+                          type="text"
+                          className="dash-input"
+                          placeholder="Ask a question about the codebase..."
+                          value={queryText}
+                          onChange={e => setQueryText(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && handleQuery()}
+                        />
+                        <button className="btn-dash-secondary ic-ask-btn" onClick={handleQuery} disabled={querying}>
+                          {querying ? 'Thinking...' : 'Ask AI'}
+                        </button>
+                      </div>
+
+                      {queryResult && (
+                        <div className="ic-result">
+                          <div className="ic-answer">
+                            <strong>AI Response</strong>
+                            <p>{queryResult.answer}</p>
+                          </div>
+                          {queryResult.graph_context && (
+                            <div className="ic-context">
+                              <strong>Context extracted from graph</strong>
+                              <div className="ic-pills">
+                                {(queryResult.graph_context.nodes || []).map((n: any, i: number) => (
+                                  <span key={i} className="ic-pill">{n.name}</span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* ── Functions Discovery (Middle Screen) ── */}
+                  <div className="functions-discovery-main" style={{marginTop: '30px'}}>
+                    <div className="section-title">
+                      <h3>🛠️ Discovered Functions</h3>
+                      <span className="badge">{graphData?.nodes.filter((n: any) => n.data.type === 'Function').length || 0}</span>
+                    </div>
+                    
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
+                      gap: '16px',
+                      marginTop: '16px'
+                    }}>
+                      {graphData?.nodes
+                        .filter((n: any) => n.data.type === 'Function')
+                        .sort((a: any, b: any) => b.data.blast_radius - a.data.blast_radius)
+                        .map((fn: any) => (
+                          <div key={fn.id} className="ic-card" style={{padding: '16px', marginBottom: 0, border: '1px solid #30363d'}}>
+                            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px'}}>
+                              <div style={{maxWidth: '70%'}}>
+                                <h4 style={{margin: 0, fontSize: '14px', color: '#e6edf3', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>
+                                  {fn.data.label}
+                                </h4>
+                                <code style={{fontSize: '10px', color: '#8b949e'}}>{fn.data.file}</code>
+                              </div>
+                              <span style={{
+                                fontSize: '10px',
+                                background: fn.data.status === 'CRITICAL' ? 'rgba(248,81,73,0.1)' : 'rgba(56,139,253,0.1)',
+                                color: fn.data.status === 'CRITICAL' ? '#f85149' : '#3fb950',
+                                border: `1px solid ${fn.data.status === 'CRITICAL' ? '#f85149' : '#3fb950'}44`,
+                                padding: '2px 8px',
+                                borderRadius: '12px',
+                                fontWeight: 'bold'
+                              }}>
+                                {fn.data.status}
+                              </span>
+                            </div>
+                            
+                            <div style={{display: 'flex', gap: '12px', marginTop: '12px'}}>
+                              <div style={{flex: 1}}>
+                                <div style={{display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#8b949e', marginBottom: '4px'}}>
+                                  <span>Security</span>
+                                  <span>{fn.data.security_score}%</span>
+                                </div>
+                                <div style={{height: '3px', background: '#21262d', borderRadius: '2px'}}>
+                                  <div style={{height: '100%', background: '#f85149', width: `${fn.data.security_score}%`, borderRadius: '2px'}} />
+                                </div>
+                              </div>
+                              <div style={{flex: 1}}>
+                                <div style={{display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#8b949e', marginBottom: '4px'}}>
+                                  <span>Connections</span>
+                                  <span>{fn.data.blast_radius}</span>
+                                </div>
+                                <div style={{height: '3px', background: '#21262d', borderRadius: '2px'}}>
+                                  <div style={{height: '100%', background: '#388bfd', width: `${Math.min(100, fn.data.blast_radius * 10)}%`, borderRadius: '2px'}} />
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      }
+                      {(!graphData || graphData.nodes.filter((n: any) => n.data.type === 'Function').length === 0) && (
+                        <div className="empty-state" style={{gridColumn: '1/-1'}}>
+                          No functions discovered yet. Analyze the repository to build the graph.
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   {/* ── File Tree from DB ── */}

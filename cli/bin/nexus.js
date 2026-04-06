@@ -257,6 +257,77 @@ program
     console.log(chalk.green('\n✓ Push complete.\n'));
   });
 
+program
+  .command('analyze')
+  .description('Build the Code Intelligence Graph from the latest pushed snapshot')
+  .action(async () => {
+    const config = readConfig();
+    if (!config.remote) {
+      console.error(chalk.red('Fatal: No remote set. Run `nexus remote <workspace>/<project>`'));
+      process.exit(1);
+    }
+
+    const [workspace, project] = config.remote.split('/');
+    const api = `${BACKEND_URL}/api/repo/${workspace}/${project}`;
+
+    console.log(chalk.cyan('\n🧠 NEXUS-X Code Intelligence Graph\n'));
+    console.log(chalk.gray(`  Project: ${chalk.bold(config.remote)}`));
+    console.log(chalk.gray(`  Backend: ${BACKEND_URL}\n`));
+
+    // ── Step 1: Trigger analysis ──────────────────────────────────────────
+    const analyzeSpinner = ora('Analyzing repository — parsing files, building graph…').start();
+
+    try {
+      const { data } = await axios.post(`${api}/analyze`, {}, { timeout: 300_000 });
+
+      if (data.status === 'error') {
+        analyzeSpinner.fail(chalk.red(data.message));
+        return;
+      }
+
+      analyzeSpinner.succeed(chalk.green('Analysis complete!'));
+
+      // ── Display Summary ─────────────────────────────────────────────────
+      console.log(chalk.cyan('\n┌─────────────────────────────────────────┐'));
+      console.log(chalk.cyan('│  📊 Analysis Summary                    │'));
+      console.log(chalk.cyan('├─────────────────────────────────────────┤'));
+
+      const reg = data.registry || {};
+      console.log(chalk.white(`│  Files analyzed:    ${chalk.bold(String(data.files_analyzed || 0).padStart(16))}`));
+      console.log(chalk.white(`│  Functions found:   ${chalk.bold(String(reg.functions || 0).padStart(16))}`));
+      console.log(chalk.white(`│  Methods found:     ${chalk.bold(String(reg.methods || 0).padStart(16))}`));
+      console.log(chalk.white(`│  Classes found:     ${chalk.bold(String(reg.classes || 0).padStart(16))}`));
+      console.log(chalk.white(`│  Total symbols:     ${chalk.bold(String(reg.total_symbols || 0).padStart(16))}`));
+
+      console.log(chalk.cyan('├─────────────────────────────────────────┤'));
+      console.log(chalk.cyan('│  🔗 Resolved References                │'));
+      console.log(chalk.cyan('├─────────────────────────────────────────┤'));
+
+      const res = data.resolved || {};
+      console.log(chalk.white(`│  Function calls:    ${chalk.bold(String(res.calls || '0/0').padStart(16))}`));
+      console.log(chalk.white(`│  File imports:      ${chalk.bold(String(res.imports || '0/0').padStart(16))}`));
+      console.log(chalk.white(`│  Class inheritance:  ${chalk.bold(String(res.extends || '0/0').padStart(15))}`));
+
+      console.log(chalk.cyan('├─────────────────────────────────────────┤'));
+      console.log(chalk.cyan('│  🕸️  Neo4j Graph                        │'));
+      console.log(chalk.cyan('├─────────────────────────────────────────┤'));
+
+      const graph = data.graph || {};
+      console.log(chalk.white(`│  Nodes created:     ${chalk.bold(String(graph.nodes_created || 0).padStart(16))}`));
+      console.log(chalk.white(`│  Edges created:     ${chalk.bold(String(graph.edges_created || 0).padStart(16))}`));
+      console.log(chalk.white(`│  CALLS edges:       ${chalk.bold(String(graph.calls || 0).padStart(16))}`));
+      console.log(chalk.white(`│  IMPORTS edges:     ${chalk.bold(String(graph.imports || 0).padStart(16))}`));
+      console.log(chalk.white(`│  EXTENDS edges:     ${chalk.bold(String(graph.extends || 0).padStart(16))}`));
+
+      console.log(chalk.cyan('└─────────────────────────────────────────┘'));
+      console.log(chalk.green('\n✓ Knowledge graph ready in Neo4j.\n'));
+
+    } catch (err) {
+      analyzeSpinner.fail(chalk.red('Analysis failed.'));
+      logError(err);
+    }
+  });
+
 // ─── Error helper ─────────────────────────────────────────────────────────────
 
 function logError(err) {
