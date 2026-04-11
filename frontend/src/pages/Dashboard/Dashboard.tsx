@@ -6,7 +6,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import CIGraph from '../../components/CIGraph/CIGraph';
 
-const BACKEND = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+const BACKEND = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8001';
 
 interface Member {
   name: string;
