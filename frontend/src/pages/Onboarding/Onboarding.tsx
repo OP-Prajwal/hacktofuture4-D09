@@ -7,7 +7,7 @@ interface OnboardingProps {
   onLaunch: (data: UserSession) => void;
 }
 
-const BACKEND = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8001';
+const BACKEND = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
 
 const Onboarding = ({ onLaunch }: OnboardingProps) => {
   const [theme, setTheme] = useState('dark');

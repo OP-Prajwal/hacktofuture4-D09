@@ -169,13 +169,16 @@ def enrich_node(node_data: dict, node_type: str) -> dict:
         return enrich_class(node_data)
     elif node_type == "File":
         # For files, we assume all_tags might be empty unless provided
-        return enrich_file(
-            node_data.get("path", ""),
+        res = enrich_file(
+            node_data.get("file", ""),
             node_data.get("language", "unknown"),
             node_data.get("num_functions", 0),
             node_data.get("num_classes", 0),
             node_data.get("child_tags", [])
         )
+        node_data["summary"] = res.get("summary", "")
+        node_data["tags"] = res.get("tags", [])
+        return node_data
     return node_data
 
 

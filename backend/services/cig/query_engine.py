@@ -15,6 +15,28 @@ from .semantic_enricher import TAG_RULES
 LLM_API_URL = "http://localhost:11434/api/generate"
 USE_LLM = True  # Set to True when Ollama server is running
 
+def _get_repo_stats(project_path: str) -> str:
+    """Fetch global node counts for the project to provide perspective to the AI."""
+    q = "MATCH (n {project: $p}) RETURN labels(n)[0] as type, count(*) as count"
+    try:
+        print(f"[CIG Stats] Fetching counts for: {project_path}")
+        results = neo4j_db.run_query(q, {"p": project_path})
+        print(f"[CIG Stats] Raw Results: {results}")
+        if not results:
+            return "None (empty graph)"
+        
+        stats = []
+        for r in results:
+            label = r.get("type") or "Unknown"
+            count = r.get("count", 0)
+            # Pluralize correctly
+            p_label = f"{label}es" if label.endswith('s') or label.endswith('ch') or label.endswith('sh') else f"{label}s"
+            stats.append(f"{p_label}: {count}")
+        return ", ".join(stats)
+    except Exception as e:
+        print(f"[CIG Stats] Failed: {e}")
+        return "Unknown (database error)"
+
 def ask_repository(workspace: str, project_name: str, question: str) -> dict:
     """
     Query flow:
@@ -33,30 +55,37 @@ def ask_repository(workspace: str, project_name: str, question: str) -> dict:
             if tag not in relevant_tags:
                 relevant_tags.append(tag)
                 
-    project_path = f"{workspace}/{project_name}"
-
     # 2. Search graph for these tags
     if not relevant_tags:
         # ── Fallback: Repo Overview ──
         # If no specific tags match, fetch the most important/connected nodes.
         # Use coalesce to handle cases where blast_radius might be missing on old nodes.
         query = """
-        MATCH (n {project: $path})
+        MATCH (n {project: $project_path})
         RETURN n, labels(n) as labels
         ORDER BY coalesce(n.blast_radius, 0) DESC
         LIMIT 10
         """
-        params = {"path": project_path}
+        params = {"project_path": project_path}
     else:
         query = """
-        MATCH (n {project: $path})
-        WHERE any(t IN n.tags WHERE t IN $tags)
-        RETURN n, labels(n) as labels LIMIT 15
+        MATCH (n {project: $project_path})
+        WHERE any(t IN n.tags WHERE t IN $tags) OR labels(n)[0] IN $labels
+        RETURN n, labels(n) as labels 
+        ORDER BY coalesce(n.blast_radius, 0) DESC
+        LIMIT 20
         """
-        params = {"path": project_path, "tags": relevant_tags}
+        params = {
+            "project_path": project_path, 
+            "tags": relevant_tags,
+            "labels": [t for t in relevant_tags if t in {"Function", "Class", "File", "Module"}]
+        }
     
     try:
+        print("query ",query)
+        print("params ",params)
         results = neo4j_db.run_query(query, params)
+        print("neo4j results ",results)
     except Exception as e:
         print(f"[CIG Query] Graph offline ({e}), returning empty.")
         results = []
@@ -104,9 +133,16 @@ def ask_repository(workspace: str, project_name: str, question: str) -> dict:
         except Exception as e:
             print(f"[CIG Query] Traversal failed: {e}")
 
+    # 4. Include Global Stats
+    repo_stats = _get_repo_stats(project_path)
+    print(f"[CIG Query] Final Repo Stats: {repo_stats}")
+
     # Build context prompt with structural hierarchy
-    context_str = "### Codebase Architectural Map\n\n"
+    context_str = f"### Overall Repository Statistics\n{repo_stats}\n\n"
+    context_str += "### Codebase Architectural Map\n\n"
     context_str += "#### Core Components:\n"
+    if not context_nodes:
+        context_str += "- (No specific components matched the search keywords)\n"
     for cn in context_nodes:
         context_str += f"- {cn['name']} ({cn['type']})\n"
         context_str += f"  Summary: {cn['summary']}\n"
@@ -120,13 +156,43 @@ def ask_repository(workspace: str, project_name: str, question: str) -> dict:
             context_str += f"- {trace}\n"
         context_str += "\n"
 
-    # 4. Ask LLM
+    # 5. Ask LLM
     answer = ""
     # Instruct the LLM to think like an architect using the graph paths
     system_instruction = (
-        "You are an expert software architect. You have been provided with a knowledge graph "
-        "of a codebase. Use the 'Core Components' and 'Logic Flow' sections to trace how "
-        "the code works. Explain your answer by referencing specific components and their connections."
+        "You are an AI assistant connected to a knowledge graph of the current repository.\n"
+        "The graph is already created from the repository. It contains functions, files, modules, "
+        "and their relationships (calls, imports, flow). You already have access to all repository context "
+        "via this graph.\n\n"
+        "Core Responsibility\n"
+        "Your job is to understand the repository by traversing the graph:\n"
+        "- Move across nodes (especially functions) and their edges.\n"
+        "- Analyze: Function logic, Call relationships, Dependencies, Execution flow.\n"
+        "- Use the 'Overall Repository Statistics' to understand the total scale of the project.\n"
+        "- Build a complete internal understanding of how the repository works.\n\n"
+        "Context Handling\n"
+        "- Always maintain full awareness of the repository structure.\n"
+        "- Use the graph as your single source of truth.\n"
+        "- When needed: Traverse connected nodes, Follow call chains, Explore related functions.\n\n"
+        "When Answering Questions\n"
+        "For every user query:\n"
+        "1. Locate relevant nodes/functions in the graph.\n"
+        "2. Traverse their connections.\n"
+        "3. Understand the flow and relationships.\n"
+        "4. Use both specific traversed nodes AND the 'Overall Repository Statistics' to formulate your answer.\n"
+        "5. Answer based ONLY on this understanding.\n\n"
+        "Strict Rules\n"
+        "- Do NOT hallucinate anything outside the graph.\n"
+        "- Do NOT give generic or theoretical answers.\n"
+        "- Do NOT assume missing logic — if not present, say so.\n"
+        "- Do NOT explain how you retrieved the data.\n"
+        "- Always stay grounded in actual graph structure + repo logic.\n\n"
+        "Goal\n"
+        "Act as a repository-aware AI debugger and explainer that:\n"
+        "- Knows how everything is connected.\n"
+        "- Understands function-level behavior deeply.\n"
+        "- Gives accurate, context-driven answers.\n"
+        "- Resolves doubts strictly based on the repository."
     )
     
     prompt = f"{system_instruction}\n\nUser Question: {question}\n\n{context_str}\n\nFinal Answer:"
@@ -155,7 +221,6 @@ def ask_repository(workspace: str, project_name: str, question: str) -> dict:
         "answer": answer,
         "graph_context": {
             "nodes_found": len(context_nodes),
-            "edges_found": len(expanded_edges),
             "relevant_tags": relevant_tags,
             "nodes": context_nodes,
         }

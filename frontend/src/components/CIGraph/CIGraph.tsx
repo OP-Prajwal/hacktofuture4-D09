@@ -14,6 +14,7 @@ export function CIGraph({ graphData }: { graphData: any }) {
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
   const [hoveredLink, setHoveredLink] = useState<any | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const fgRef = useRef<any>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
 
   useEffect(() => {
@@ -26,6 +27,18 @@ export function CIGraph({ graphData }: { graphData: any }) {
     observer.observe(containerRef.current);
     return () => observer.disconnect();
   }, []);
+
+  // Tweak physics values to spread nodes out neatly
+  useEffect(() => {
+    if (fgRef.current) {
+      // Stronger repulsion keeps nodes away from each other
+      fgRef.current.d3Force('charge').strength(-800).distanceMax(1000);
+      // Give links more room to breathe
+      fgRef.current.d3Force('link').distance(120);
+      // Weaker center gravity lets the graph expand highly flexibly
+      fgRef.current.d3Force('center', null);
+    }
+  }, [graphData]);
 
   // Filter nodes based on search
   const filteredData = useMemo(() => {
@@ -114,6 +127,7 @@ export function CIGraph({ graphData }: { graphData: any }) {
 
       <div ref={containerRef} style={{ flex: 1, position: 'relative', minHeight: 0, userSelect: 'none', overflow: 'hidden' }}>
         <ForceGraph2D
+          ref={fgRef}
           width={dimensions.width || 800}
           height={dimensions.height || 600}
           graphData={filteredData}
@@ -131,33 +145,49 @@ export function CIGraph({ graphData }: { graphData: any }) {
               const isConnected = l.source.id === hoveredNode || l.target.id === hoveredNode;
               return isConnected ? '#58a6ff' : 'rgba(33, 38, 45, 0.2)';
             }
-            return 'rgba(61, 68, 77, 0.3)';
+            return 'rgba(230, 237, 243, 0.4)'; // highly visible light connections
           }}
           linkWidth={(l: any) => {
             if (hoveredNode) {
               const isConnected = l.source.id === hoveredNode || l.target.id === hoveredNode;
-              return isConnected ? 2 : 1;
+              return isConnected ? 3 : 1;
             }
-            return 1;
+            return 2; // thicker base string
           }}
           linkDirectionalParticles={(l: any) => {
             if (hoveredNode) {
-              return (l.source.id === hoveredNode || l.target.id === hoveredNode) ? 4 : 0;
+              return (l.source.id === hoveredNode || l.target.id === hoveredNode) ? 6 : 0;
             }
             if (hoveredLink && l === hoveredLink) {
-              return 4;
+              return 6;
             }
-            return 0;
+            return 0; // only visible when hovered!
           }}
-          linkDirectionalParticleWidth={2}
-          linkDirectionalParticleSpeed={0.005}
-          linkDirectionalArrowLength={3}
+          linkDirectionalParticleWidth={4}
+          linkDirectionalParticleSpeed={0.008}
+          linkDirectionalArrowLength={6}
           linkDirectionalArrowRelPos={1}
           linkCurvature={0.25}
+          cooldownTicks={200}
           onNodeClick={(node: any) => setSelectedNodeId(node.id)}
           onNodeHover={(node: any) => setHoveredNode(node ? node.id : null)}
           onLinkHover={(link: any) => setHoveredLink(link)}
           onBackgroundClick={() => setSelectedNodeId(null)}
+          onNodeDragEnd={(node: any) => {
+            // Pin the node in place after dragging to allow stretching lines indefinitely
+            node.fx = node.x;
+            node.fy = node.y;
+          }}
+          onEngineStop={() => {
+            // Once the initial layout finishes, permanently FREEZE every single node in place!
+            // This ensures pulling one node will NEVER move the rest of the graph.
+            if (filteredData && filteredData.nodes) {
+              filteredData.nodes.forEach((n: any) => {
+                n.fx = n.x;
+                n.fy = n.y;
+              });
+            }
+          }}
           nodeCanvasObject={(node: any, ctx, globalScale) => {
             if (node.hidden) return;
             const label = node.name;

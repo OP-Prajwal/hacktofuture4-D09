@@ -6,7 +6,47 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import CIGraph from '../../components/CIGraph/CIGraph';
 
-const BACKEND = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8001';
+const BACKEND = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+
+export interface GraphNodeData {
+  type: string;
+  label: string;
+  file: string;
+  status: string;
+  summary: string;
+  tags: string[];
+  security_score: number;
+  reliability_score: number;
+  scalability_score: number;
+  blast_radius: number;
+  last_commit: string;
+}
+
+export interface GraphNode {
+  id: string;
+  name?: string;
+  data: GraphNodeData;
+}
+
+export interface GraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  type?: string;
+  weight?: number;
+}
+
+export interface GraphData {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
+export interface QueryResult {
+  answer: string;
+  graph_context?: {
+    nodes: GraphNode[];
+  };
+}
 
 interface Member {
   name: string;
@@ -74,8 +114,8 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
   const [analyzeStep, setAnalyzeStep] = useState("");
   const [queryText, setQueryText] = useState("");
   const [querying, setQuerying] = useState(false);
-  const [queryResult, setQueryResult] = useState<any>(null);
-  const [graphData, setGraphData] = useState<{ nodes: any[], edges: any[] } | null>(null);
+  const [queryResult, setQueryResult] = useState<QueryResult | null>(null);
+  const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [fullScreenGraph, setFullScreenGraph] = useState(false);
 
   const isEnterprise = session.type === 'enterprise';
@@ -410,13 +450,13 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
               <div className="fg-section">
                 <h4>Functions Discovery</h4>
                 <div style={{ maxHeight: '300px', overflowY: 'auto', background: '#0d1117', borderRadius: '6px', padding: '8px', border: '1px solid #21262d' }}>
-                  {graphData.nodes.filter((n: any) => n.data.type === 'Function').length === 0 ? (
+                  {graphData.nodes.filter((n: GraphNode) => n.data.type === 'Function').length === 0 ? (
                     <div style={{ fontSize: '11px', color: '#8b949e', padding: '10px' }}>No functions found.</div>
                   ) : (
                     graphData.nodes
-                      .filter((n: any) => n.data.type === 'Function')
-                      .sort((a: any, b: any) => b.data.blast_radius - a.data.blast_radius)
-                      .map((fn: any) => (
+                      .filter((n: GraphNode) => n.data.type === 'Function')
+                      .sort((a: GraphNode, b: GraphNode) => b.data.blast_radius - a.data.blast_radius)
+                      .map((fn: GraphNode) => (
                         <div key={fn.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 8px', borderBottom: '1px solid #21262d', fontSize: '11px' }}>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', maxWidth: '70%' }}>
                             <span style={{ color: '#e6edf3', fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fn.data.label}</span>
@@ -581,9 +621,9 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                         </div>
                         <div style={{ display: 'flex', gap: '8px' }}>
                           <button className="btn-dash-primary" onClick={handleAnalyze} disabled={analyzing}>
-                            {analyzing ? `Analyzing... ${analyzeProgress}%` : (graphData?.nodes?.length ? 'Re-create Graph' : 'Create Graph')}
+                            {analyzing ? `Analyzing... ${analyzeProgress}%` : ((graphData?.nodes?.length || 0) > 0 ? 'Re-create Graph' : 'Create Graph')}
                           </button>
-                          {graphData?.nodes?.length > 0 && (
+                          {(graphData?.nodes?.length || 0) > 0 && (
                             <button 
                               className="btn-dash-secondary" 
                               onClick={() => setFullScreenGraph(true)}
@@ -634,8 +674,8 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                             <div className="ic-context">
                               <strong>Context extracted from graph</strong>
                               <div className="ic-pills">
-                                {(queryResult.graph_context.nodes || []).map((n: any, i: number) => (
-                                  <span key={i} className="ic-pill">{n.name}</span>
+                                {(queryResult.graph_context.nodes || []).map((n: GraphNode, i: number) => (
+                                  <span key={i} className="ic-pill">{n.name || n.data?.label}</span>
                                 ))}
                               </div>
                             </div>
@@ -649,7 +689,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                   <div className="functions-discovery-main" style={{marginTop: '30px'}}>
                     <div className="section-title">
                       <h3>🛠️ Discovered Functions</h3>
-                      <span className="badge">{graphData?.nodes.filter((n: any) => n.data.type === 'Function').length || 0}</span>
+                      <span className="badge">{graphData?.nodes.filter((n: GraphNode) => n.data.type === 'Function').length || 0}</span>
                     </div>
                     
                     <div style={{
@@ -659,9 +699,9 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                       marginTop: '16px'
                     }}>
                       {graphData?.nodes
-                        .filter((n: any) => n.data.type === 'Function')
-                        .sort((a: any, b: any) => b.data.blast_radius - a.data.blast_radius)
-                        .map((fn: any) => (
+                        .filter((n: GraphNode) => n.data.type === 'Function')
+                        .sort((a: GraphNode, b: GraphNode) => b.data.blast_radius - a.data.blast_radius)
+                        .map((fn: GraphNode) => (
                           <div key={fn.id} className="ic-card" style={{padding: '16px', marginBottom: 0, border: '1px solid #30363d'}}>
                             <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px'}}>
                               <div style={{maxWidth: '70%'}}>
@@ -706,7 +746,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                           </div>
                         ))
                       }
-                      {(!graphData || graphData.nodes.filter((n: any) => n.data.type === 'Function').length === 0) && (
+                      {(!graphData || graphData.nodes.filter((n: GraphNode) => n.data.type === 'Function').length === 0) && (
                         <div className="empty-state" style={{gridColumn: '1/-1'}}>
                           No functions discovered yet. Analyze the repository to build the graph.
                         </div>
