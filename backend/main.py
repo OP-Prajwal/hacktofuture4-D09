@@ -232,21 +232,31 @@ def get_file_tree(workspace: str, project_name: str):
 
 # ─── Code Intelligence Graph (CIG) Routes ────────────────────────────────────
 
+from services.cig import start_analysis_async, get_analysis_status
+
 class AnalyzeRequest(BaseModel):
     local_path: Optional[str] = None
+    force: bool = False
 
 @app.post("/api/repo/{workspace}/{project_name}/analyze")
 def analyze_project(workspace: str, project_name: str, body: AnalyzeRequest = None):
     """
-    Trigger full CIG analysis using GitNexus.
-    Optionally pass { "local_path": "C:/path/to/repo" } to specify the repo location.
+    Start CIG analysis in background. Returns immediately with a job_id.
+    Poll /analyze/status/{job_id} for progress.
     """
     try:
         local_path = body.local_path if body else None
-        result = analyze_repository(workspace, project_name, local_path=local_path)
+        force = body.force if body else False
+        result = start_analysis_async(workspace, project_name, local_path=local_path, force=force)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/repo/{workspace}/{project_name}/analyze/status/{job_id}")
+def analyze_status(workspace: str, project_name: str, job_id: str):
+    """Poll this endpoint for analysis progress."""
+    return get_analysis_status(job_id)
 
 
 @app.get("/api/repo/{workspace}/{project_name}/graph")

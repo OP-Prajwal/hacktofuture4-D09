@@ -69,6 +69,8 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
 
   // Intelligence state
   const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeProgress, setAnalyzeProgress] = useState(0);
+  const [analyzeStep, setAnalyzeStep] = useState("");
   const [queryText, setQueryText] = useState("");
   const [querying, setQuerying] = useState(false);
   const [queryResult, setQueryResult] = useState<any>(null);
@@ -235,25 +237,67 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
     if (localPath === null) return; // user cancelled
 
     setAnalyzing(true);
+    setAnalyzeProgress(0);
+    setAnalyzeStep("Starting analysis...");
+
     try {
       const p = projects.find(x => x.id === activeProject);
       if (!p) return;
       const [workspace, project] = p.cloneCode.split('/');
+
+      // 1. Start async analysis — returns instantly with job_id
       const res = await fetch(`${BACKEND}/api/repo/${workspace}/${project}/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ local_path: localPath || null })
       });
-      if (res.ok) {
-        await fetchGraph(p.cloneCode);
-        setFullScreenGraph(true);
-      } else {
+
+      if (!res.ok) {
         const err = await res.json().catch(() => null);
         alert(`Analysis failed: ${err?.detail || 'Unknown error'}`);
+        setAnalyzing(false);
+        return;
       }
+
+      const { job_id } = await res.json();
+      if (!job_id) { alert('No job_id returned'); setAnalyzing(false); return; }
+
+      // 2. Poll for progress every 1.5s
+      const poll = async () => {
+        try {
+          const statusRes = await fetch(`${BACKEND}/api/repo/${workspace}/${project}/analyze/status/${job_id}`);
+          if (!statusRes.ok) return;
+          const status = await statusRes.json();
+
+          setAnalyzeProgress(status.progress || 0);
+          setAnalyzeStep(status.step || "");
+
+          if (status.status === 'success') {
+            // Done! Fetch the graph
+            await fetchGraph(p.cloneCode);
+            setFullScreenGraph(true);
+            setAnalyzing(false);
+            setAnalyzeStep("");
+            return;
+          } else if (status.status === 'error') {
+            alert(`Analysis failed: ${status.message || status.result?.message || 'Unknown error'}`);
+            setAnalyzing(false);
+            setAnalyzeStep("");
+            return;
+          }
+
+          // Still running — poll again
+          setTimeout(poll, 1500);
+        } catch {
+          setTimeout(poll, 2000);
+        }
+      };
+
+      // Start polling after a short delay
+      setTimeout(poll, 1000);
+
     } catch {
       alert("Knowledge Graph analysis failed.");
-    } finally {
       setAnalyzing(false);
     }
   };
@@ -473,8 +517,19 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                           <p>Analyze your repository to build a comprehensive knowledge graph of functions and dependencies.</p>
                         </div>
                         <button className="btn-dash-primary" onClick={handleAnalyze} disabled={analyzing}>
-                          {analyzing ? 'Analyzing...' : 'Create Graph'}
+                          {analyzing ? `Analyzing... ${analyzeProgress}%` : 'Create Graph'}
                         </button>
+                        {analyzing && (
+                          <div style={{width: '100%', marginTop: '12px'}}>
+                            <div style={{display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#8b949e', marginBottom: '6px'}}>
+                              <span>{analyzeStep}</span>
+                              <span>{analyzeProgress}%</span>
+                            </div>
+                            <div style={{height: '4px', background: '#21262d', borderRadius: '4px', overflow: 'hidden'}}>
+                              <div style={{height: '100%', background: 'linear-gradient(90deg, #388bfd, #58a6ff)', width: `${analyzeProgress}%`, borderRadius: '4px', transition: 'width 0.5s ease'}} />
+                            </div>
+                          </div>
+                        )}
                       </div>
 
                       <div className="ic-query">

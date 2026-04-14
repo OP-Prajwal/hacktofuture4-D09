@@ -6,55 +6,145 @@ for deep, accurate Tree-sitter-based analysis:
 
 User clicks "Create Graph"
  ↓
-API /analyze  (with local_path to the repo on disk)
+API /analyze  →  returns job_id instantly
  ↓
-Orchestrator
+Background thread:
+ 1. Check for existing .gitnexus/lbug  (FAST PATH — skips analysis)
+ 2. If stale/missing → run `gitnexus analyze <path>`
+ 3. Run `dump_gitnexus.js <path>`  (Extract LadybugDB → JSON)
+ 4. Transform & ingest into Neo4j + MongoDB
  ↓
-1. Run `gitnexus analyze <path>`  (Tree-sitter parsing, type resolution, clustering)
+Frontend polls /analyze/status/{job_id}
  ↓
-2. Run `dump_gitnexus.js <path>`  (Extract LadybugDB → JSON)
- ↓
-3. Transform & ingest into Neo4j + MongoDB
- ↓
-Graph ready
+Graph ready → frontend fetches /graph
 """
 
 import json
 import os
 import subprocess
 import sys
+import time
+import threading
+import uuid
 from pathlib import Path
 
 from db.mongo import mongo
 
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
-# Resolve paths relative to this file, not $CWD
 _THIS_DIR = Path(__file__).resolve().parent
 _BACKEND_DIR = _THIS_DIR.parent.parent            # backend/
 _PROJECT_ROOT = _BACKEND_DIR.parent                # nexus-X/
 _GITNEXUS_CLI = _PROJECT_ROOT / "GitNexus" / "gitnexus" / "dist" / "cli" / "index.js"
 _DUMP_SCRIPT  = _THIS_DIR / "dump_gitnexus.js"
 
+# ─── Job Tracker ──────────────────────────────────────────────────────────────
+# In-memory store for background analysis jobs
+_jobs: dict[str, dict] = {}
+
+# How old (in seconds) the .gitnexus/lbug can be before we re-analyze
+_CACHE_MAX_AGE_SECONDS = 3600  # 1 hour
+
+
+def get_analysis_status(job_id: str) -> dict:
+    """Return current status of a background analysis job."""
+    job = _jobs.get(job_id)
+    if not job:
+        return {"status": "not_found", "job_id": job_id}
+    return {**job}
+
+
+def start_analysis_async(workspace: str, project_name: str, local_path: str | None = None, force: bool = False) -> dict:
+    """
+    Start analysis in a background thread. Returns immediately with a job_id.
+    The frontend polls /analyze/status/{job_id} for progress.
+    """
+    job_id = str(uuid.uuid4())[:8]
+    _jobs[job_id] = {
+        "job_id": job_id,
+        "status": "running",
+        "step": "starting",
+        "progress": 0,
+        "project": f"{workspace}/{project_name}",
+        "started_at": time.time(),
+    }
+
+    def _run():
+        try:
+            result = analyze_repository(workspace, project_name, local_path, force=force, job_id=job_id)
+            _jobs[job_id].update({
+                "status": result.get("status", "error"),
+                "result": result,
+                "step": "done",
+                "progress": 100,
+                "finished_at": time.time(),
+                "time_seconds": round(time.time() - _jobs[job_id]["started_at"], 1),
+            })
+        except Exception as e:
+            _jobs[job_id].update({
+                "status": "error",
+                "step": "failed",
+                "message": str(e),
+                "finished_at": time.time(),
+            })
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+
+    return {"status": "started", "job_id": job_id}
+
 
 # ─── Analyse via GitNexus ────────────────────────────────────────────────────
 
-def analyze_repository(workspace: str, project_name: str, local_path: str | None = None) -> dict:
+def _update_job(job_id: str | None, step: str, progress: int):
+    """Update job progress if running async."""
+    if job_id and job_id in _jobs:
+        _jobs[job_id]["step"] = step
+        _jobs[job_id]["progress"] = progress
+
+
+def _has_fresh_lbug(repo_path: str) -> bool:
+    """
+    Check if .gitnexus/lbug already exists and is recent enough to skip
+    the expensive `gitnexus analyze` step.
+    """
+    lbug_path = Path(repo_path) / ".gitnexus" / "lbug"
+    if not lbug_path.exists():
+        return False
+
+    # Check the most recently modified file inside lbug/
+    try:
+        newest = max(
+            (f.stat().st_mtime for f in lbug_path.rglob("*") if f.is_file()),
+            default=0,
+        )
+        age = time.time() - newest
+        if age < _CACHE_MAX_AGE_SECONDS:
+            print(f"[CIG] Fresh LadybugDB found ({age:.0f}s old, max {_CACHE_MAX_AGE_SECONDS}s) — SKIPPING analysis")
+            return True
+        else:
+            print(f"[CIG] LadybugDB is stale ({age:.0f}s old) — will re-analyze")
+            return False
+    except Exception:
+        return False
+
+
+def analyze_repository(workspace: str, project_name: str, local_path: str | None = None, force: bool = False, job_id: str | None = None) -> dict:
     """
     Full CIG analysis pipeline using GitNexus.
 
-    1. Determine the local repo path to analyze
-    2. Run GitNexus CLI to build the graph (Tree-sitter + fixpoint type resolution)
-    3. Dump the LadybugDB graph to JSON
-    4. Transform nodes/edges into the Nexus-X schema
-    5. Store graph in Neo4j (best-effort) + MongoDB
-    6. Return analysis summary
+    Smart fast path: if .gitnexus/lbug already exists and is fresh,
+    we skip the expensive `gitnexus analyze` step entirely. This makes
+    repeated graph builds nearly instant (3-5s instead of 60+s).
     """
+    t_start = time.time()
+
     print(f"\n{'='*60}")
-    print(f"[CIG] Starting GitNexus analysis: {workspace}/{project_name}")
+    print(f"[CIG] Starting analysis: {workspace}/{project_name}")
     print(f"{'='*60}\n")
 
     # ── Step 1: Resolve repo path ─────────────────────────────────────────
+    _update_job(job_id, "Resolving repository path...", 5)
     repo_path = _resolve_repo_path(workspace, project_name, local_path)
     if not repo_path:
         return {
@@ -65,18 +155,33 @@ def analyze_repository(workspace: str, project_name: str, local_path: str | None
         }
     print(f"[CIG] Repo path resolved: {repo_path}")
 
-    # ── Step 2: Run GitNexus analyze ──────────────────────────────────────
-    print("[CIG] Step 2: Running GitNexus analysis...")
-    gitnexus_ok = _run_gitnexus_analyze(repo_path)
-    if not gitnexus_ok:
-        return {
-            "status": "error",
-            "message": "GitNexus analysis failed. Check server logs for details."
-        }
+    # ── Step 2: Run GitNexus analyze (SKIP if cache is fresh) ─────────────
+    _update_job(job_id, "Checking for cached analysis...", 10)
+    skipped_analysis = False
+
+    if not force and _has_fresh_lbug(repo_path):
+        skipped_analysis = True
+        _update_job(job_id, "Using cached analysis (fast path!)", 50)
+        print("[CIG] Step 2: SKIPPED — using existing LadybugDB data")
+    else:
+        _update_job(job_id, "Running GitNexus analysis (this takes a while)...", 15)
+        t2 = time.time()
+        print("[CIG] Step 2: Running GitNexus analysis...")
+        gitnexus_ok = _run_gitnexus_analyze(repo_path)
+        print(f"[CIG] Step 2 took {time.time()-t2:.1f}s")
+        if not gitnexus_ok:
+            return {
+                "status": "error",
+                "message": "GitNexus analysis failed. Check server logs for details."
+            }
+        _update_job(job_id, "GitNexus analysis complete", 50)
 
     # ── Step 3: Dump the LadybugDB graph ──────────────────────────────────
+    _update_job(job_id, "Extracting graph from LadybugDB...", 55)
+    t3 = time.time()
     print("[CIG] Step 3: Extracting graph from LadybugDB...")
     raw_graph = _dump_gitnexus_graph(repo_path)
+    print(f"[CIG] Step 3 took {time.time()-t3:.1f}s")
     if not raw_graph:
         return {
             "status": "error",
@@ -89,19 +194,23 @@ def analyze_repository(workspace: str, project_name: str, local_path: str | None
     print(f"[CIG] Extracted: {len(raw_nodes)} nodes, {len(raw_edges)} edges")
 
     # ── Step 4: Transform to Nexus-X schema ───────────────────────────────
-    print("[CIG] Step 4: Transforming graph to Nexus-X schema...")
+    _update_job(job_id, f"Transforming {len(raw_nodes)} nodes...", 65)
+    t4 = time.time()
     project_path = f"{workspace}/{project_name}"
     graph_nodes, graph_edges = _transform_gitnexus_graph(
         raw_nodes, raw_edges, project_path, project_name
     )
-    print(f"[CIG] Transformed: {len(graph_nodes)} nodes, {len(graph_edges)} edges")
+    print(f"[CIG] Step 4 took {time.time()-t4:.1f}s — {len(graph_nodes)} nodes, {len(graph_edges)} edges")
 
     # ── Step 5: Write to Neo4j (best-effort) ──────────────────────────────
-    print("[CIG] Step 5: Writing graph to Neo4j...")
+    _update_job(job_id, "Writing graph to Neo4j...", 75)
+    t5 = time.time()
     neo4j_stats = _write_to_neo4j(graph_nodes, graph_edges, project_path)
+    print(f"[CIG] Step 5 took {time.time()-t5:.1f}s")
 
     # ── Step 6: Store snapshot in MongoDB ─────────────────────────────────
-    print("[CIG] Step 6: Storing graph snapshot in MongoDB...")
+    _update_job(job_id, "Storing graph snapshot...", 90)
+    t6 = time.time()
     graphs_col = mongo.get_collection("graphs")
     graphs_col.delete_many({"project": project_path})
     graphs_col.insert_one({
@@ -113,12 +222,17 @@ def analyze_repository(workspace: str, project_name: str, local_path: str | None
         "total_nodes": len(graph_nodes),
         "total_edges": len(graph_edges),
     })
+    print(f"[CIG] Step 6 took {time.time()-t6:.1f}s")
 
     # ── Done ──────────────────────────────────────────────────────────────
+    total_time = time.time() - t_start
+    _update_job(job_id, "done", 100)
+
     summary = {
         "status": "success",
         "project": project_path,
         "engine": "gitnexus",
+        "skipped_analysis": skipped_analysis,
         "graph": {
             "nodes": len(graph_nodes),
             "edges": len(graph_edges),
@@ -128,11 +242,13 @@ def analyze_repository(workspace: str, project_name: str, local_path: str | None
             "edges": raw_graph.get("total_edges", 0),
         },
         "neo4j": neo4j_stats,
+        "time_seconds": round(total_time, 1),
     }
 
     print(f"\n{'='*60}")
-    print(f"[CIG] GitNexus analysis complete!")
+    print(f"[CIG] Analysis complete! {'(FAST PATH — cached)' if skipped_analysis else ''}")
     print(f"  Nodes: {len(graph_nodes)}, Edges: {len(graph_edges)}")
+    print(f"  Total time: {total_time:.1f}s")
     print(f"{'='*60}\n")
 
     return summary
@@ -417,62 +533,91 @@ def _write_to_neo4j(
     edges: list[dict],
     project_path: str,
 ) -> dict:
-    """Write graph to Neo4j (best-effort). Returns stats dict."""
+    """Write graph to Neo4j using batched UNWIND queries for speed."""
+    import time
     try:
         from db.neo4j_db import neo4j_db
+
+        t0 = time.time()
 
         # Clear old data
         neo4j_db.run_query(
             "MATCH (n) WHERE n.project = $path DETACH DELETE n",
             {"path": project_path}
         )
+        print(f"[CIG] Neo4j: cleared old data in {time.time()-t0:.1f}s")
 
-        # Insert nodes in batches
+        # ── Batch insert nodes by type using UNWIND ──────────────────────
+        t1 = time.time()
         nodes_created = 0
+
+        # Group nodes by type for efficient batch creation
+        nodes_by_type: dict[str, list[dict]] = {}
         for n in nodes:
             node_type = n.get("type", "Function")
+            # Sanitize type to prevent Cypher injection
+            node_type = "".join(c for c in node_type if c.isalnum() or c == "_")
+            if not node_type:
+                node_type = "Function"
+            nodes_by_type.setdefault(node_type, []).append({
+                "id": n["id"],
+                "name": n.get("name", ""),
+                "file": n.get("file", ""),
+                "summary": n.get("summary", ""),
+                "line": n.get("line", 0),
+            })
+
+        for node_type, batch in nodes_by_type.items():
             try:
                 neo4j_db.run_query(f"""
+                    UNWIND $batch AS row
                     CREATE (n:{node_type} {{
-                        qualified_name: $id,
-                        name: $name,
-                        file_path: $file,
+                        qualified_name: row.id,
+                        name: row.name,
+                        file_path: row.file,
                         project: $project,
-                        summary: $summary,
-                        start_line: $line
+                        summary: row.summary,
+                        start_line: row.line
                     }})
-                """, {
-                    "id": n["id"],
-                    "name": n.get("name", ""),
-                    "file": n.get("file", ""),
-                    "project": project_path,
-                    "summary": n.get("summary", ""),
-                    "line": n.get("line", 0),
-                })
-                nodes_created += 1
-            except Exception:
-                pass
+                """, {"batch": batch, "project": project_path})
+                nodes_created += len(batch)
+            except Exception as e:
+                print(f"[CIG] Neo4j batch insert for {node_type} failed: {e}")
 
-        # Insert edges
+        print(f"[CIG] Neo4j: inserted {nodes_created} nodes in {time.time()-t1:.1f}s")
+
+        # ── Batch insert edges by type using UNWIND ──────────────────────
+        t2 = time.time()
         edges_created = 0
+
+        # Group edges by relationship type
+        edges_by_type: dict[str, list[dict]] = {}
         for e in edges:
             rel_type = e.get("type", "CALLS")
+            rel_type = "".join(c for c in rel_type if c.isalnum() or c == "_")
+            if not rel_type:
+                rel_type = "CALLS"
+            edges_by_type.setdefault(rel_type, []).append({
+                "source": e["source"],
+                "target": e["target"],
+            })
+
+        for rel_type, batch in edges_by_type.items():
             try:
                 neo4j_db.run_query(f"""
-                    MATCH (a {{qualified_name: $source, project: $project}})
-                    MATCH (b {{qualified_name: $target, project: $project}})
+                    UNWIND $batch AS row
+                    MATCH (a {{qualified_name: row.source, project: $project}})
+                    MATCH (b {{qualified_name: row.target, project: $project}})
                     CREATE (a)-[:{rel_type}]->(b)
-                """, {
-                    "source": e["source"],
-                    "target": e["target"],
-                    "project": project_path,
-                })
-                edges_created += 1
-            except Exception:
-                pass
+                """, {"batch": batch, "project": project_path})
+                edges_created += len(batch)
+            except Exception as e:
+                print(f"[CIG] Neo4j batch edge insert for {rel_type} failed: {e}")
+
+        print(f"[CIG] Neo4j: inserted {edges_created} edges in {time.time()-t2:.1f}s")
 
         stats = {"nodes_created": nodes_created, "edges_created": edges_created}
-        print(f"[CIG] Neo4j: {nodes_created} nodes, {edges_created} edges")
+        print(f"[CIG] Neo4j total write time: {time.time()-t0:.1f}s")
         return stats
 
     except Exception as e:
