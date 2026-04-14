@@ -35,7 +35,7 @@ def build_workflow(
     orchestrator_llm = llm or OrchestratorLLM()
 
     graph = StateGraph(OrchestratorState)
-    graph.add_node("triage", triage_incident)
+    graph.add_node("triage", partial(triage_incident, llm=orchestrator_llm))
     graph.add_node("observability_agent", partial(collect_observability_context, registry=registry))
     graph.add_node("slack_agent", partial(collect_slack_context, registry=registry))
     graph.add_node("tracker_agent", partial(collect_tracker_context, registry=registry))
@@ -43,7 +43,7 @@ def build_workflow(
     graph.add_node("merge_context", merge_external_context)
     graph.add_node("localize_code", partial(localize_code, locator=locator))
     graph.add_node("rank_hypotheses", partial(rank_hypotheses, llm=orchestrator_llm))
-    graph.add_node("write_report", partial(write_report, output_dir=reports_dir))
+    graph.add_node("write_report", partial(write_report, output_dir=reports_dir, llm=orchestrator_llm))
 
     graph.add_edge(START, "triage")
     graph.add_edge("triage", "observability_agent")

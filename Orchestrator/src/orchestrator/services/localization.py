@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import json
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -94,6 +95,38 @@ class Neo4jGraphLocator:
 
         return [self._to_code_location(row, file_hints, normalized_terms) for row in rows if row.get("file_path")]
 
+    def describe_project(self) -> dict:
+        details = {
+            "configured": self.is_configured(),
+            "uri": self.uri,
+            "database": self.database,
+            "project": self.project,
+            "counts": {},
+        }
+        if not self.is_configured():
+            return details
+
+        query = """
+        MATCH (n {project: $project})
+        WHERE any(label IN labels(n) WHERE label IN $node_labels)
+        RETURN labels(n)[0] AS label, count(*) AS count
+        ORDER BY label ASC
+        """
+        try:
+            with GraphDatabase.driver(self.uri, auth=(self.username, self.password)) as driver:
+                with driver.session(database=self.database) as session:
+                    rows = [
+                        record.data()
+                        for record in session.run(
+                            query,
+                            {"project": self.project, "node_labels": list(GRAPH_NODE_LABELS)},
+                        )
+                    ]
+            details["counts"] = {row["label"]: row["count"] for row in rows}
+        except Exception as exc:
+            details["error"] = str(exc)
+        return details
+
     def _extract_symbol_hints(self, incident: IncidentInput, search_terms: list[str]) -> list[str]:
         symbols = set()
         stack_hints = re.findall(r"(?:at|in)\s+([A-Za-z_][A-Za-z0-9_]*)", incident.stack_trace)
@@ -154,12 +187,22 @@ class Neo4jGraphLocator:
 class RepositoryLocator:
     def __init__(self, repo_root: Path | None = None, graph_project: str | None = None):
         self.repo_root = repo_root
-        self.graph_locator = Neo4jGraphLocator(project=graph_project)
+        resolved_project = graph_project or self._resolve_graph_project(repo_root)
+        self.graph_locator = Neo4jGraphLocator(project=resolved_project)
 
     def locate(self, incident: IncidentInput, search_terms: list[str]) -> list[CodeLocation]:
         graph_hits = self.graph_locator.locate(incident, search_terms)
         repo_hits = self._locate_in_repo(incident, search_terms)
         return self._merge_locations(graph_hits, repo_hits)
+
+    def describe(self) -> dict:
+        repo_root = str(self.repo_root) if self.repo_root else None
+        repo_exists = bool(self.repo_root and self.repo_root.exists())
+        return {
+            "repo_root": repo_root,
+            "repo_root_exists": repo_exists,
+            "graph": self.graph_locator.describe_project(),
+        }
 
     def _locate_in_repo(self, incident: IncidentInput, search_terms: list[str]) -> list[CodeLocation]:
         if self.repo_root is None or not self.repo_root.exists():
@@ -241,4 +284,33 @@ class RepositoryLocator:
             lowered = line.lower()
             if any(term in lowered for term in search_terms):
                 return index
+        return None
+
+    def _resolve_graph_project(self, repo_root: Path | None) -> str | None:
+        candidates: list[Path] = []
+        if repo_root is not None:
+            candidates.append(repo_root)
+        candidates.append(Path.cwd())
+
+        seen: set[Path] = set()
+        for base in candidates:
+            if base in seen:
+                continue
+            seen.add(base)
+            remote = self._read_remote_from_nexus_config(base)
+            if remote:
+                return remote
+        return None
+
+    def _read_remote_from_nexus_config(self, base: Path) -> str | None:
+        config_path = base / ".nexus" / "config.json"
+        if not config_path.exists():
+            return None
+        try:
+            data = json.loads(config_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        remote = data.get("remote")
+        if isinstance(remote, str) and "/" in remote:
+            return remote.strip()
         return None

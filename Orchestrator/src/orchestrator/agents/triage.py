@@ -1,20 +1,14 @@
 from __future__ import annotations
 
-import re
-
 from orchestrator.agents.roles import get_default_agent_roles
+from orchestrator.llm import OrchestratorLLM
 from orchestrator.models import EvidenceItem
 from orchestrator.state import OrchestratorState
 
 
-def triage_incident(state: OrchestratorState) -> OrchestratorState:
+def triage_incident(state: OrchestratorState, llm: OrchestratorLLM) -> OrchestratorState:
     incident = state["incident"]
-    search_terms = _extract_search_terms(
-        incident.error_summary,
-        incident.stack_trace,
-        " ".join(incident.logs[:20]),
-        incident.service,
-    )
+    search_terms = llm.extract_search_terms(incident)
     evidence = list(state.get("evidence", []))
     evidence.append(
         EvidenceItem(
@@ -39,21 +33,3 @@ def triage_incident(state: OrchestratorState) -> OrchestratorState:
         "search_terms": search_terms,
         "evidence": evidence,
     }
-
-
-def _extract_search_terms(*texts: str) -> list[str]:
-    tokens: list[str] = []
-    for text in texts:
-        tokens.extend(re.findall(r"[A-Za-z_][A-Za-z0-9_\-/.:]{2,}", text))
-
-    normalized: list[str] = []
-    seen = set()
-    for token in tokens:
-        cleaned = token.strip(".,:;()[]{}<>").lower()
-        if len(cleaned) < 3:
-            continue
-        if cleaned in seen:
-            continue
-        seen.add(cleaned)
-        normalized.append(cleaned)
-    return normalized[:25]

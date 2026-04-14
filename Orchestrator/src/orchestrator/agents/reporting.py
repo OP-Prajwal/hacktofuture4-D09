@@ -3,10 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+from orchestrator.llm import OrchestratorLLM
 from orchestrator.state import OrchestratorState
 
 
-def write_report(state: OrchestratorState, output_dir: Path) -> OrchestratorState:
+def write_report(state: OrchestratorState, output_dir: Path, llm: OrchestratorLLM) -> OrchestratorState:
     incident = state["incident"]
     evidence = state.get("evidence", [])
     historical = state.get("historical_incidents", [])
@@ -17,6 +18,8 @@ def write_report(state: OrchestratorState, output_dir: Path) -> OrchestratorStat
     output_dir.mkdir(parents=True, exist_ok=True)
     report_path = output_dir / f"{incident.id}.md"
 
+    summary = llm.summarize_incident(incident)
+
     lines: list[str] = [
         f"# Incident Report: {incident.title}",
         "",
@@ -25,6 +28,7 @@ def write_report(state: OrchestratorState, output_dir: Path) -> OrchestratorStat
         f"- Service: `{incident.service}`",
         f"- Environment: `{incident.environment}`",
         f"- Generated At: `{datetime.now(UTC).isoformat()}`",
+        f"- Overview: {summary}",
         f"- Error Summary: {incident.error_summary}",
         "",
         "## Agent Roles",

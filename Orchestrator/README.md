@@ -105,6 +105,14 @@ NEO4J_PROJECT=workspace_slug/project_slug
 
 `NEO4J_PROJECT` is the required tenant/project isolation key. Every lookup is scoped to that exact `project` value.
 
+If you pass `--repo-root`, the orchestrator now derives the graph scope automatically from `repo_root/.nexus/config.json` using its `remote` value. That should match the project the agent was spawned from. Use `--graph-project` only to override it.
+
+Validate the setup before running a full incident:
+
+```bash
+python -m orchestrator.main doctor --repo-root ../test-repo
+```
+
 ## Run
 
 ```bash
@@ -124,6 +132,12 @@ python -m orchestrator.main run sample-incident.json --repo-root ../test-repo --
 ```
 
 To override the graph scope at runtime:
+
+```bash
+nexus-orchestrator run sample-incident.json --repo-root ../test-repo --memory-dir ./memory
+```
+
+Override example:
 
 ```bash
 nexus-orchestrator run sample-incident.json --graph-project acme-corp/api-server --repo-root ../test-repo --memory-dir ./memory
