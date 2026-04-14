@@ -37,6 +37,8 @@ def _get_repo_stats(project_path: str) -> str:
         print(f"[CIG Stats] Failed: {e}")
         return "Unknown (database error)"
 
+import os
+
 def ask_repository(workspace: str, project_name: str, question: str) -> dict:
     """
     Query flow:
@@ -46,6 +48,24 @@ def ask_repository(workspace: str, project_name: str, question: str) -> dict:
     4. Pass context to LLM for final answer
     """
     project_path = f"{workspace}/{project_name}"
+    
+    # ── FORCE LOAD README ──
+    # Directly read the file from disk to bypass graph omissions
+    readme_content = ""
+    # Try multiple possible absolute and relative backend paths just to be safe
+    paths_to_check = [
+        os.path.join("c:\\nexus-X", project_name, "README.md"),
+        os.path.join(project_name, "README.md"),
+        os.path.join(project_path, "README.md")
+    ]
+    for p in paths_to_check:
+        if os.path.exists(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    readme_content = f.read()
+                break
+            except Exception:
+                pass
     
     # 1. Identify relevant tags
     q_lower = question.lower()
@@ -139,6 +159,19 @@ def ask_repository(workspace: str, project_name: str, question: str) -> dict:
 
     # Build context prompt with structural hierarchy
     context_str = f"### Overall Repository Statistics\n{repo_stats}\n\n"
+    
+    # Attempt to fetch README explicitly from disk loaded earlier, or fallback to graph
+    if readme_content:
+        context_str += f"### Repository README.md Content\n[ABSOLUTE GROUND TRUTH - READ CAREFULLY]\n{readme_content}\n\n"
+    else:
+        readme_query = "MATCH (n {project: $path}) WHERE n.name ENDS WITH 'README.md' RETURN n.summary as summary LIMIT 1"
+        try:
+            readme_res = neo4j_db.run_query(readme_query, {"path": project_path})
+            if readme_res and readme_res[0].get("summary"):
+                context_str += f"### Repository README.md Content\n{readme_res[0]['summary']}\n\n"
+        except Exception:
+            pass
+
     context_str += "### Codebase Architectural Map\n\n"
     context_str += "#### Core Components:\n"
     if not context_nodes:
@@ -176,13 +209,15 @@ def ask_repository(workspace: str, project_name: str, question: str) -> dict:
         "- When needed: Traverse connected nodes, Follow call chains, Explore related functions.\n\n"
         "When Answering Questions\n"
         "For every user query:\n"
-        "1. Locate relevant nodes/functions in the graph.\n"
-        "2. Traverse their connections.\n"
-        "3. Understand the flow and relationships.\n"
-        "4. Use both specific traversed nodes AND the 'Overall Repository Statistics' to formulate your answer.\n"
-        "5. Answer based ONLY on this understanding.\n\n"
+        "1. ALWAYS check the 'Repository README.md Content' first if provided to understand the project structure and intent properly.\n"
+        "2. Locate relevant nodes/functions in the graph.\n"
+        "3. Traverse their connections.\n"
+        "4. Understand the flow and relationships.\n"
+        "5. Use the README, specific traversed nodes AND the 'Overall Repository Statistics' to formulate your answer.\n"
+        "6. Answer based ONLY on this understanding.\n\n"
         "Strict Rules\n"
         "- Do NOT hallucinate anything outside the graph.\n"
+        "- Do NOT invent fake functions (e.g., proc_0) to fill in gaps.\n"
         "- Do NOT give generic or theoretical answers.\n"
         "- Do NOT assume missing logic — if not present, say so.\n"
         "- Do NOT explain how you retrieved the data.\n"

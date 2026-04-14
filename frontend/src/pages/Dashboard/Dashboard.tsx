@@ -1,10 +1,18 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import './Dashboard.css';
 import type { UserSession } from '../../App';
 import FileTree, { type TreeData, type FileNode } from '../../components/FileTree/FileTree';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import CIGraph from '../../components/CIGraph/CIGraph';
+
+interface ChatMessage {
+  id: string;
+  role: 'user' | 'ai';
+  content: string;
+  timestamp: Date;
+  contextNodes?: { name: string; type: string }[];
+}
 
 const BACKEND = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
 
@@ -118,13 +126,29 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [fullScreenGraph, setFullScreenGraph] = useState(false);
 
+  // AI Chat state
+  const [fgViewMode, setFgViewMode] = useState<'graph' | 'chat'>('graph');
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatSending, setChatSending] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const chatInputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-scroll chat to bottom
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatMessages]);
+
   const isEnterprise = session.type === 'enterprise';
   const orgName = isEnterprise ? session.company : `${session.name}'s Workspace`;
 
-  // Persist active project
+  // Persist active project and reset view states
   useEffect(() => {
     if (activeProject) {
       localStorage.setItem(`activeProject_${session.workspace}`, activeProject);
+      setChatMessages([]);
+      setFgViewMode('graph');
+      setFullScreenGraph(false);
     }
   }, [activeProject, session.workspace]);
 
@@ -301,7 +325,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
       const res = await fetch(`${BACKEND}/api/repo/${workspace}/${project}/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ local_path: null })
+        body: JSON.stringify({ local_path: null, force: true })
       });
 
       if (!res.ok) {
@@ -380,110 +404,318 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
     }
   };
 
+  const handleChatSend = async () => {
+    const text = chatInput.trim();
+    if (!text || chatSending) return;
+
+    const userMsg: ChatMessage = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: text,
+      timestamp: new Date()
+    };
+    setChatMessages(prev => [...prev, userMsg]);
+    setChatInput('');
+    setChatSending(true);
+
+    try {
+      const p = projects.find(x => x.id === activeProject);
+      if (!p) return;
+      const [workspace, project] = p.cloneCode.split('/');
+      const res = await fetch(`${BACKEND}/api/repo/${workspace}/${project}/query`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: text })
+      });
+
+      let answer = 'Sorry, I could not reach the intelligence layer.';
+      let contextNodes: { name: string; type: string }[] = [];
+
+      if (res.ok) {
+        const data = await res.json();
+        answer = data.answer || 'No response from the AI.';
+        contextNodes = (data.graph_context?.nodes || []).map((n: GraphNode) => ({
+          name: n.name || n.data?.label || 'Unknown',
+          type: n.data?.type || 'Unknown'
+        }));
+      }
+
+      const aiMsg: ChatMessage = {
+        id: `ai-${Date.now()}`,
+        role: 'ai',
+        content: answer,
+        timestamp: new Date(),
+        contextNodes
+      };
+      setChatMessages(prev => [...prev, aiMsg]);
+    } catch {
+      setChatMessages(prev => [...prev, {
+        id: `ai-err-${Date.now()}`,
+        role: 'ai',
+        content: 'Error: Could not connect to the backend. Make sure the server is running.',
+        timestamp: new Date()
+      }]);
+    } finally {
+      setChatSending(false);
+      chatInputRef.current?.focus();
+    }
+  };
+
+  // Format AI responses into clean, ChatGPT-style HTML
+  const formatAIResponse = (text: string): string => {
+    // Escape HTML
+    let html = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+    // Bold: **text** or __text__
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/__(.+?)__/g, '<strong>$1</strong>');
+
+    // Inline code: `code`
+    html = html.replace(/`([^`]+)`/g, '<code class="nx-inline-code">$1</code>');
+
+    // Split into lines for block processing
+    const lines = html.split('\n');
+    const result: string[] = [];
+    let inList = false;
+    let listType = '';
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+
+      // Bullet list: - item or • item or * item
+      if (/^[-•\*]\s+/.test(line)) {
+        if (!inList || listType !== 'ul') {
+          if (inList) result.push(`</${listType}>`);
+          result.push('<ul class="nx-ai-list">');
+          inList = true;
+          listType = 'ul';
+        }
+        result.push(`<li>${line.replace(/^[-•\*]\s+/, '')}</li>`);
+        continue;
+      }
+
+      // Numbered list: 1. item or 1) item
+      if (/^\d+[.)\s]+/.test(line)) {
+        if (!inList || listType !== 'ol') {
+          if (inList) result.push(`</${listType}>`);
+          result.push('<ol class="nx-ai-list">');
+          inList = true;
+          listType = 'ol';
+        }
+        result.push(`<li>${line.replace(/^\d+[.)\s]+/, '')}</li>`);
+        continue;
+      }
+
+      // Close list if we're in one
+      if (inList) {
+        result.push(`</${listType}>`);
+        inList = false;
+        listType = '';
+      }
+
+      // Empty line = paragraph break
+      if (line === '') {
+        continue;
+      }
+
+      // Regular paragraph
+      result.push(`<p>${line}</p>`);
+    }
+
+    if (inList) result.push(`</${listType}>`);
+
+    return result.join('');
+  };
+
   return (
     <div className="dash-root">
       {/* Fullscreen Graph Overlay */}
-      {fullScreenGraph && graphData && activeProject && (
+      {fullScreenGraph && graphData && activeProject && (() => {
+        const topFunctions = graphData.nodes
+          .filter((n: GraphNode) => n.data.type === 'Function')
+          .sort((a: GraphNode, b: GraphNode) => b.data.blast_radius - a.data.blast_radius)
+          .slice(0, 10);
+
+        const welcomeMsg = `Repo indexed. I know your ${graphData.nodes.length} nodes and ${graphData.edges.length} edges. Ask me anything — trace a call chain, find all callers of a function, detect dead code, or explain a module.`;
+
+        const smartSuggestions = topFunctions.length > 0 ? [
+          `Trace ${topFunctions[0]?.data.label} ↗`,
+          `Dead code in ${topFunctions[0]?.data.file?.split('/').pop() || 'main.py'} ↗`,
+          `Explain ${topFunctions.find((f: GraphNode) => f.data.type === 'Class')?.data.label || topFunctions[1]?.data.label || 'module'} ↗`,
+        ] : ['How many functions are there? ↗', 'Explain the architecture ↗', 'Find dead code ↗'];
+
+        return (
         <div className="fullscreen-graph-overlay">
-          <header className="fg-header">
-            <div className="fg-title">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
-              Knowledge Graph: <span>{projects.find(x => x.id === activeProject)?.name}</span>
-            </div>
-            <button className="btn-fg-close" onClick={() => setFullScreenGraph(false)} style={{background: 'var(--accent2)', color: '#fff', fontWeight: 'bold', border: 'none'}}>← Back to Dashboard</button>
-          </header>
-          <div className="fg-body">
-            <aside className="fg-sidebar">
-              <div className="fg-section">
-                <h4>Graph Statistics</h4>
-                <div className="fg-stats">
-                  <div className="fg-stat-card">
-                    <div className="fg-stat-val">{graphData.nodes.length}</div>
-                    <div className="fg-stat-lbl">Nodes</div>
-                  </div>
-                  <div className="fg-stat-card">
-                    <div className="fg-stat-val">{graphData.edges.length}</div>
-                    <div className="fg-stat-lbl">Edges</div>
-                  </div>
-                </div>
+          <div className="nx-panel">
+            {/* ═══ LEFT SIDEBAR ═══ */}
+            <aside className="nx-sidebar">
+              <div className="nx-brand" onClick={() => setFullScreenGraph(false)} style={{cursor: 'pointer'}}>
+                NEXUS<span>-X</span>
               </div>
-              
-              <div className="fg-section">
-                <h4>Quick Query</h4>
-                <div className="fg-query-box">
-                  <input 
-                    type="text" 
-                    className="dash-input" 
-                    placeholder="Ask repository..." 
-                    value={queryText}
-                    onChange={e => setQueryText(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && handleQuery()}
-                  />
-                  <button className="btn-fg-ask" onClick={handleQuery} disabled={querying}>
-                    {querying ? 'Thinking...' : 'Run Query'}
-                  </button>
+
+              {/* Stats */}
+              <div className="nx-stats-row">
+                <div className="nx-stat-box">
+                  <div className="nx-stat-num">{graphData.nodes.length}</div>
+                  <div className="nx-stat-label">Nodes</div>
+                </div>
+                <div className="nx-stat-box">
+                  <div className="nx-stat-num">{graphData.edges.length}</div>
+                  <div className="nx-stat-label">Edges</div>
                 </div>
               </div>
 
-              {queryResult && (
-                <div className="fg-section">
-                  <h4>Query Result</h4>
-                  <div className="ic-result" style={{marginTop: 0}}>
-                    <div className="ic-answer">
-                      <p style={{fontSize: '12px', margin: 0}}>{queryResult.answer}</p>
+              {/* Top Functions */}
+              <div className="nx-fn-title">TOP FUNCTIONS</div>
+              <div className="nx-fn-list">
+                {topFunctions.length === 0 ? (
+                  <div className="nx-fn-empty">No functions discovered yet.</div>
+                ) : (
+                  topFunctions.map((fn: GraphNode) => (
+                    <div key={fn.id} className="nx-fn-item">
+                      <div className="nx-fn-info">
+                        <span className="nx-fn-name">{fn.data.label}</span>
+                        <span className="nx-fn-file">{fn.data.file?.split('/').pop()}</span>
+                      </div>
+                      <span className="nx-fn-badge">{fn.data.blast_radius}</span>
                     </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="fg-section">
-                <h4>Legend</h4>
-                <div className="fg-legend">
-                  <div className="lg-item"><span className="lg-dot" style={{background: '#39d353'}}></span> Module</div>
-                  <div className="lg-item"><span className="lg-dot" style={{background: '#58a6ff'}}></span> File</div>
-                  <div className="lg-item"><span className="lg-dot" style={{background: '#f78166'}}></span> Function</div>
-                  <div className="lg-item"><span className="lg-dot" style={{background: '#e3b341'}}></span> Class</div>
-                  <div className="lg-item"><span className="lg-line" style={{background: 'rgba(88, 166, 255, 0.6)'}}></span> Semantics (Imports/Calls)</div>
-                </div>
+                  ))
+                )}
               </div>
 
-              <div className="fg-section">
-                <h4>Functions Discovery</h4>
-                <div style={{ maxHeight: '300px', overflowY: 'auto', background: '#0d1117', borderRadius: '6px', padding: '8px', border: '1px solid #21262d' }}>
-                  {graphData.nodes.filter((n: GraphNode) => n.data.type === 'Function').length === 0 ? (
-                    <div style={{ fontSize: '11px', color: '#8b949e', padding: '10px' }}>No functions found.</div>
-                  ) : (
-                    graphData.nodes
-                      .filter((n: GraphNode) => n.data.type === 'Function')
-                      .sort((a: GraphNode, b: GraphNode) => b.data.blast_radius - a.data.blast_radius)
-                      .map((fn: GraphNode) => (
-                        <div key={fn.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 8px', borderBottom: '1px solid #21262d', fontSize: '11px' }}>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', maxWidth: '70%' }}>
-                            <span style={{ color: '#e6edf3', fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fn.data.label}</span>
-                            <span style={{ color: '#8b949e', fontSize: '9px' }}>{fn.data.file}</span>
-                          </div>
-                          <span style={{ 
-                            background: fn.data.status === 'CRITICAL' ? 'rgba(248,81,73,0.1)' : 'rgba(56,139,253,0.1)',
-                            color: fn.data.status === 'CRITICAL' ? '#f85149' : '#388bfd',
-                            padding: '2px 6px',
-                            borderRadius: '10px',
-                            fontSize: '9px',
-                            fontWeight: 'bold'
-                          }}>
-                            {fn.data.blast_radius} conn
-                          </span>
-                        </div>
-                      ))
-                  )}
-                </div>
-              </div>
+              {/* Show dependency graph button */}
+              <button className="nx-graph-toggle" onClick={() => setFgViewMode(fgViewMode === 'graph' ? 'chat' : 'graph')}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+                  <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+                </svg>
+                {fgViewMode === 'graph' ? 'Show AI chat' : 'Show dependency graph'} ↗
+              </button>
+
+              {/* Exit Dashboard Button */}
+              <button className="nx-exit-btn" onClick={() => setFullScreenGraph(false)}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="19" y1="12" x2="5" y2="12"></line>
+                  <polyline points="12 19 5 12 12 5"></polyline>
+                </svg>
+                Exit to Dashboard
+              </button>
             </aside>
-            <main className="fg-main">
-              <CIGraph graphData={graphData} />
-            </main>
+
+            {/* ═══ MAIN AREA ═══ */}
+            <div className="nx-main">
+              {fgViewMode === 'graph' ? (
+                <>
+                  <div className="nx-chat-header">
+                    <div>
+                      <h2>Knowledge Graph</h2>
+                      <p>Visual dependency map of your codebase</p>
+                    </div>
+                    <button className="nx-fullgraph-btn" onClick={() => setFgViewMode('chat')}>
+                      AI Agent ↗
+                    </button>
+                  </div>
+                  <div className="nx-graph-area">
+                    <CIGraph graphData={graphData} />
+                  </div>
+                </>
+              ) : (
+                <>
+                  {/* Chat Header */}
+                  <div className="nx-chat-header">
+                    <div>
+                      <h2>Agent</h2>
+                      <p>Ask anything about your repo</p>
+                    </div>
+                    <button className="nx-fullgraph-btn" onClick={() => setFgViewMode('graph')}>
+                      Full graph ↗
+                    </button>
+                  </div>
+
+                  {/* Chat Body */}
+                  <div className="nx-chat-body">
+                    {/* Welcome message — always shown */}
+                    {chatMessages.length === 0 && (
+                      <div className="nx-ai-card">
+                        <div className="nx-ai-label">NEXUS</div>
+                        <div className="nx-ai-text" dangerouslySetInnerHTML={{ __html: formatAIResponse(welcomeMsg) }} />
+                        <div className="nx-suggestion-row">
+                          {smartSuggestions.map(s => (
+                            <button key={s} className="nx-suggestion-chip" onClick={() => {
+                              setChatInput(s.replace(' ↗', ''));
+                              chatInputRef.current?.focus();
+                            }}>
+                              {s}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Messages */}
+                    {chatMessages.map(msg => (
+                      msg.role === 'user' ? (
+                        <div key={msg.id} className="nx-user-bubble">
+                          {msg.content}
+                        </div>
+                      ) : (
+                        <div key={msg.id} className="nx-ai-card">
+                          <div className="nx-ai-label">NEXUS</div>
+                          <div className="nx-ai-text" dangerouslySetInnerHTML={{ __html: formatAIResponse(msg.content) }} />
+                          {msg.contextNodes && msg.contextNodes.length > 0 && (
+                            <div className="nx-ai-context">
+                              {msg.contextNodes.slice(0, 6).map((n, i) => (
+                                <span key={i} className="nx-code-pill">{n.name}</span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    ))}
+
+                    {chatSending && (
+                      <div className="nx-ai-card">
+                        <div className="nx-ai-label">NEXUS</div>
+                        <div className="chat-typing-indicator">
+                          <span></span><span></span><span></span>
+                        </div>
+                      </div>
+                    )}
+                    <div ref={chatEndRef} />
+                  </div>
+
+                  {/* Input Bar */}
+                  <div className="nx-chat-input-bar">
+                    <input
+                      ref={chatInputRef}
+                      type="text"
+                      className="nx-chat-input"
+                      placeholder="Ask about your codebase..."
+                      value={chatInput}
+                      onChange={e => setChatInput(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleChatSend()}
+                      disabled={chatSending}
+                    />
+                    <button
+                      className="nx-send-btn"
+                      onClick={handleChatSend}
+                      disabled={chatSending || !chatInput.trim()}
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                      </svg>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Top Navbar */}
       <nav className="dash-nav">
@@ -621,7 +853,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                         </div>
                         <div style={{ display: 'flex', gap: '8px' }}>
                           <button className="btn-dash-primary" onClick={handleAnalyze} disabled={analyzing}>
-                            {analyzing ? `Analyzing... ${analyzeProgress}%` : ((graphData?.nodes?.length || 0) > 0 ? 'Re-create Graph' : 'Create Graph')}
+                            {analyzing ? `Analyzing... ${analyzeProgress}%` : ((graphData?.nodes?.length || 0) > 0 ? 'Sync Updated Graph' : 'Create Graph')}
                           </button>
                           {(graphData?.nodes?.length || 0) > 0 && (
                             <button 
