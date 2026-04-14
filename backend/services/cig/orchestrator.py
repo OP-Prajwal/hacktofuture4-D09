@@ -29,6 +29,7 @@ import uuid
 from pathlib import Path
 
 from db.mongo import mongo
+from .semantic_enricher import enrich_node
 
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
@@ -262,24 +263,35 @@ def _resolve_repo_path(workspace: str, project_name: str, local_path: str | None
     Priority:
       1. Explicit local_path from the request
       2. Stored metadata in MongoDB from a previous `nexus push`
-      3. Common local directory patterns
+      3. Current working directory (if it looks like the right project)
+      4. Common local directory patterns
     """
     # 1. Explicit path
     if local_path and os.path.isdir(local_path):
         return os.path.abspath(local_path)
 
-    # 2. Check MongoDB commits for metadata.local_path
+    # 2. Check MongoDB commits for metadata.local_path or metadata.push_source
     commits = mongo.get_collection("commits")
     latest = commits.find_one(
         {"workspace": workspace, "project": project_name},
         sort=[("pushed_at", -1)]
     )
     if latest:
-        meta_path = latest.get("metadata", {}).get("local_path")
-        if meta_path and os.path.isdir(meta_path):
-            return os.path.abspath(meta_path)
+        meta = latest.get("metadata", {})
+        # Try local_path first (new CLI), then push_source (old CLI)
+        path_candidate = meta.get("local_path") or meta.get("push_source")
+        if path_candidate and os.path.isdir(path_candidate):
+            return os.path.abspath(path_candidate)
 
-    # 3. Check if the project_name itself is a valid local directory
+    # 3. Check if the backend is running INSIDE the target project directory
+    # (Common during local dev/testing)
+    cwd = os.getcwd()
+    if project_name.lower() in cwd.lower() or workspace.lower() in cwd.lower():
+        # Verify if it looks like a repo (has .nexus or is a known project folder)
+        if os.path.isdir(os.path.join(cwd, ".nexus")) or os.path.isdir(os.path.join(cwd, "backend")):
+            return cwd
+
+    # 4. Check common local directory patterns
     #    (e.g. user named the project after the folder)
     common_paths = [
         os.path.join(os.path.expanduser("~"), project_name),
@@ -436,7 +448,7 @@ def _transform_gitnexus_graph(
         "Section": "File",
     }
 
-    # Edge type mapping - GitNexus uses granular types, normalize
+    # Edge type mapping
     EDGE_TYPE_MAP = {
         "CONTAINS": "CONTAINS",
         "CALLS": "CALLS",
@@ -462,20 +474,18 @@ def _transform_gitnexus_graph(
         "type": "Project",
     })
 
-    # Build a set of node IDs for edge validation
-    node_ids = set()
+    node_ids = {project_path}
 
+    # 1. Process all raw nodes
     for n in raw_nodes:
         node_id = n.get("id", "")
-        if not node_id:
-            continue
+        if not node_id: continue
 
         label = n.get("label", "CodeElement")
         nexus_type = TYPE_MAP.get(label, "Function")
 
         name = n.get("name", "")
         if not name:
-            # Derive name from id (GitNexus ids are like "Function:path/file.py::funcName")
             parts = node_id.split("::")
             name = parts[-1] if len(parts) > 1 else node_id.split(":")[-1]
             if "/" in name or "\\" in name:
@@ -492,38 +502,35 @@ def _transform_gitnexus_graph(
             "line": n.get("startLine", 0),
             "summary": n.get("description", ""),
             "tags": [],
+            "source": n.get("sourceCode", ""),
         }
 
-        # Extra fields for community/process nodes
         if label == "Community":
-            node["name"] = n.get("heuristicLabel") or n.get("label") or name
+            node["name"] = n.get("heuristicLabel") or name
             node["tags"] = n.get("keywords", [])
         elif label == "Process":
-            node["name"] = n.get("heuristicLabel") or n.get("label") or name
+            node["name"] = n.get("heuristicLabel") or name
+
+        # AI Enrichment
+        node = enrich_node(node, nexus_type)
 
         graph_nodes.append(node)
         node_ids.add(node_id)
 
-    # Transform edges
+    # 2. Process all edges & calculate degrees (blast_radius)
+    degrees = {}
     for e in raw_edges:
-        source = e.get("source", "")
-        target = e.get("target", "")
-        rel_type = e.get("type", "CALLS")
+        src = e.get("source", "")
+        tgt = e.get("target", "")
+        if src in node_ids and tgt in node_ids:
+            nexus_rel = EDGE_TYPE_MAP.get(e.get("type", ""), "CALLS")
+            graph_edges.append({"source": src, "target": tgt, "type": nexus_rel})
+            degrees[src] = degrees.get(src, 0) + 1
+            degrees[tgt] = degrees.get(tgt, 0) + 1
 
-        if not source or not target:
-            continue
-
-        # Only keep edges where both ends exist in our node set
-        if source not in node_ids or target not in node_ids:
-            continue
-
-        nexus_rel = EDGE_TYPE_MAP.get(rel_type, rel_type)
-
-        graph_edges.append({
-            "source": source,
-            "target": target,
-            "type": nexus_rel,
-        })
+    # 3. Inject blast_radius
+    for node in graph_nodes:
+        node["blast_radius"] = degrees.get(node["id"], 0)
 
     return graph_nodes, graph_edges
 
@@ -564,6 +571,8 @@ def _write_to_neo4j(
                 "name": n.get("name", ""),
                 "file": n.get("file", ""),
                 "summary": n.get("summary", ""),
+                "tags": n.get("tags", []),
+                "blast_radius": n.get("blast_radius", 0),
                 "line": n.get("line", 0),
             })
 
@@ -577,6 +586,8 @@ def _write_to_neo4j(
                         file_path: row.file,
                         project: $project,
                         summary: row.summary,
+                        tags: row.tags,
+                        blast_radius: row.blast_radius,
                         start_line: row.line
                     }})
                 """, {"batch": batch, "project": project_path})
@@ -708,6 +719,8 @@ def _refine_and_transform_graph(nodes, edges, project_path):
                 "label": node_name,
                 "file": file_prop.split("/")[-1].split("\\")[-1] if file_prop else node_name,
                 "status": status,
+                "summary": n.get("summary", ""),
+                "tags": n.get("tags", []),
                 "security_score": sec_score,
                 "reliability_score": rel_score,
                 "scalability_score": sca_score,
@@ -756,6 +769,7 @@ def get_project_graph(workspace: str, project_name: str) -> dict:
                 coalesce(n.file_path, n.path, '') AS file,
                 labels(n)[0] AS type,
                 coalesce(n.summary, '') AS summary,
+                coalesce(n.tags, []) AS tags,
                 coalesce(n.start_line, 0) AS line
         """, {"path": project_path})
 

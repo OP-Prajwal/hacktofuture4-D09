@@ -50,11 +50,12 @@ const getLanguage = (filename: string) => {
 
 const Dashboard = ({ session, onLogout }: DashboardProps) => {
   const [projects, setProjects] = useState<Project[]>([]);
-  const [activeProject, setActiveProject] = useState<string | null>(null);
+  const [activeProject, setActiveProject] = useState<string | null>(localStorage.getItem(`activeProject_${session.workspace}`));
 
   // Create Project State
   const [showNewProj, setShowNewProj] = useState(false);
   const [newProj, setNewProj] = useState({ name: '', description: '' });
+  const [createdProject, setCreatedProject] = useState<Project | null>(null);
 
   // Add Member State
   const [newMem, setNewMem] = useState({ name: '', email: '', role: 'developer' });
@@ -74,11 +75,18 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
   const [queryText, setQueryText] = useState("");
   const [querying, setQuerying] = useState(false);
   const [queryResult, setQueryResult] = useState<any>(null);
-  const [graphData, setGraphData] = useState<{ nodes: any[], links: any[] } | null>(null);
+  const [graphData, setGraphData] = useState<{ nodes: any[], edges: any[] } | null>(null);
   const [fullScreenGraph, setFullScreenGraph] = useState(false);
 
   const isEnterprise = session.type === 'enterprise';
   const orgName = isEnterprise ? session.company : `${session.name}'s Workspace`;
+
+  // Persist active project
+  useEffect(() => {
+    if (activeProject) {
+      localStorage.setItem(`activeProject_${session.workspace}`, activeProject);
+    }
+  }, [activeProject, session.workspace]);
 
   // Fetch file tree when project is selected
   const fetchTree = useCallback(async (cloneCode: string) => {
@@ -128,11 +136,21 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
       if (res.ok) {
         const data = await res.json();
         setProjects(data);
+        
+        // Auto-select if nothing active or stored
+        if (!activeProject && data.length > 0) {
+          const stored = localStorage.getItem(`activeProject_${session.workspace}`);
+          if (stored && data.find((p: Project) => p.id === stored)) {
+            setActiveProject(stored);
+          } else {
+            setActiveProject(data[0].id);
+          }
+        }
       }
     } catch (e) {
       console.error("Failed to load projects", e);
     }
-  }, [session.workspace, session.token]);
+  }, [session.workspace, session.token, activeProject]);
 
   useEffect(() => {
     loadProjects();
@@ -177,10 +195,10 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
         body: JSON.stringify({ name: newProj.name, description: newProj.description })
       });
       if (res.ok) {
-        const createdProject = await res.json();
-        setProjects([createdProject, ...projects]);
+        const data = await res.json();
+        setProjects([data, ...projects]);
         setNewProj({ name: '', description: '' });
-        setShowNewProj(false);
+        setCreatedProject(data);
       }
     } catch (e) {
       console.error(e);
@@ -230,12 +248,6 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
   };
 
   const handleAnalyze = async () => {
-    const localPath = prompt(
-      "Enter the local path to the repository:\n(e.g. C:\\Users\\me\\projects\\my-app)",
-      ""
-    );
-    if (localPath === null) return; // user cancelled
-
     setAnalyzing(true);
     setAnalyzeProgress(0);
     setAnalyzeStep("Starting analysis...");
@@ -249,7 +261,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
       const res = await fetch(`${BACKEND}/api/repo/${workspace}/${project}/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ local_path: localPath || null })
+        body: JSON.stringify({ local_path: null })
       });
 
       if (!res.ok) {
@@ -475,7 +487,48 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
         </div>
 
         <div className="dash-content">
-          {showNewProj ? (
+          {createdProject ? (
+            <div className="proj-form-card" style={{ maxWidth: '600px' }}>
+              <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+                <div style={{ width: '48px', height: '48px', background: 'rgba(57, 211, 83, 0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                </div>
+                <h2 style={{ margin: 0 }}>Project Deployed!</h2>
+                <p style={{ marginTop: '8px' }}>Your environment for <strong>{createdProject.name}</strong> is ready.</p>
+              </div>
+
+              <div className="clone-box" style={{ background: '#000', border: '1px solid var(--accent2)' }}>
+                <div className="clone-label" style={{ color: 'var(--accent2)' }}>🚀 CONNECT COMMAND</div>
+                <p style={{ fontSize: '12px', color: 'var(--text2)', marginBottom: '12px' }}>Run this in your local repository to initialize, connect, and analyze the graph in one go.</p>
+                <div className="clone-cmd" style={{ background: 'rgba(88, 166, 255, 0.05)', borderColor: 'rgba(88, 166, 255, 0.2)' }}>
+                  <code style={{ fontSize: '12px', color: '#a5d6ff' }}>
+                    nexus init && nexus remote {createdProject.cloneCode} && nexus push && nexus analyze
+                  </code>
+                  <button className="clone-copy" onClick={() => {
+                    navigator.clipboard.writeText(`nexus init && nexus remote ${createdProject.cloneCode} && nexus push && nexus analyze`);
+                  }}>
+                    COPY
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+                <button className="btn-dash-primary" onClick={() => {
+                  setActiveProject(createdProject.id);
+                  setCreatedProject(null);
+                  setShowNewProj(false);
+                }}>
+                  Go to Dashboard
+                </button>
+                <button className="btn-dash-secondary" onClick={() => {
+                  setCreatedProject(null);
+                  setShowNewProj(false);
+                }}>
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          ) : showNewProj ? (
             <div className="proj-form-card">
               <h2>Deploy New Project</h2>
               <p>Initialize a new project environment under <strong>{orgName}</strong>.</p>
@@ -496,7 +549,17 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
             </div>
           ) : activeProject ? (
             (() => {
-              const p = projects.find(x => x.id === activeProject)!;
+              const p = projects.find(x => x.id === activeProject);
+              if (!p) {
+                return (
+                  <div className="empty-dashboard">
+                    <div className="loading-spinner-container">
+                      <div className="nexus-spinner"></div>
+                      <p>Loading project environment...</p>
+                    </div>
+                  </div>
+                );
+              }
               return (
                 <div className="project-view">
                   <div className="proj-header">
@@ -516,9 +579,24 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                           <h4>Structural Analysis</h4>
                           <p>Analyze your repository to build a comprehensive knowledge graph of functions and dependencies.</p>
                         </div>
-                        <button className="btn-dash-primary" onClick={handleAnalyze} disabled={analyzing}>
-                          {analyzing ? `Analyzing... ${analyzeProgress}%` : 'Create Graph'}
-                        </button>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button className="btn-dash-primary" onClick={handleAnalyze} disabled={analyzing}>
+                            {analyzing ? `Analyzing... ${analyzeProgress}%` : (graphData?.nodes?.length ? 'Re-create Graph' : 'Create Graph')}
+                          </button>
+                          {graphData?.nodes?.length > 0 && (
+                            <button 
+                              className="btn-dash-secondary" 
+                              onClick={() => setFullScreenGraph(true)}
+                              style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                                <circle cx="12" cy="12" r="3"/>
+                              </svg>
+                              View Graph
+                            </button>
+                          )}
+                        </div>
                         {analyzing && (
                           <div style={{width: '100%', marginTop: '12px'}}>
                             <div style={{display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#8b949e', marginBottom: '6px'}}>
@@ -661,24 +739,28 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                       </div>
                       <div className="doc-card">
                         <div className="doc-step-badge">2</div>
-                        <h4>Initialize Workspace</h4>
-                        <p>Run these inside your codebase to bootstrap the platform.</p>
+                        <h4>Initialize &amp; Connect</h4>
+                        <p>Run the combined command inside your codebase to bootstrap the platform.</p>
                         <div className="terminal-block">
-                          <div className="term-line"><span className="term-prompt">$</span> nexus init</div>
+                          <div className="term-line term-line-interactive">
+                            <span><span className="term-prompt">$</span> nexus init && nexus remote {p.cloneCode}</span>
+                            <button className="clone-copy inline-copy" onClick={() => navigator.clipboard.writeText(`nexus init && nexus remote ${p.cloneCode}`)} title="Copy">
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                            </button>
+                          </div>
                         </div>
                       </div>
                       <div className="doc-card full-span">
                         <div className="doc-step-badge">3</div>
-                        <h4>Connect Origin &amp; Push</h4>
-                        <p>Link your local setup to this remote and sync the file graph.</p>
+                        <h4>Sync &amp; Analyze</h4>
+                        <p>Push your repository files and trigger the Code Intelligence Graph build.</p>
                         <div className="terminal-block">
                           <div className="term-line term-line-interactive">
-                            <span><span className="term-prompt">$</span> nexus remote {p.cloneCode}</span>
-                            <button className="clone-copy inline-copy" onClick={() => navigator.clipboard.writeText(`nexus remote ${p.cloneCode}`)} title="Copy">
+                            <span><span className="term-prompt">$</span> nexus push && nexus analyze</span>
+                            <button className="clone-copy inline-copy" onClick={() => navigator.clipboard.writeText(`nexus push && nexus analyze`)} title="Copy">
                               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                             </button>
                           </div>
-                          <div className="term-line"><span className="term-prompt">$</span> nexus push</div>
                         </div>
                       </div>
                     </div>

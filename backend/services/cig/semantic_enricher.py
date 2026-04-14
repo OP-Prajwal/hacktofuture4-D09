@@ -6,7 +6,7 @@ Generates semantic meaning for each graph node:
   - tags: categorization labels
 
 Uses rule-based heuristics (deterministic, no LLM dependency).
-LLM integration (qwen3-coder) can be added in Phase 2.
+LLM integration (qwen2.5-coder:3b) can be added in Phase 2.
 """
 
 import re
@@ -15,18 +15,18 @@ import re
 import requests
 
 # ── LLM Integration (Phase 2) ────────────────────────────────────────────────
-# Configured for local qwen3-coder (4B)
+# Configured for local qwen2.5-coder:3b
 LLM_ENDPOINT = "http://localhost:11434/api/generate"
-# Set to True locally if Ollama + qwen3-coder is running
-USE_LLM = False
+# Set to True locally if Ollama + qwen2.5-coder:3b is running
+USE_LLM = True
 
 def _llm_summarize(function_source: str) -> str:
-    """Generate summary using local qwen3-coder."""
+    """Generate summary using local qwen2.5-coder:3b."""
     if not USE_LLM:
         return ""
     try:
         response = requests.post(LLM_ENDPOINT, json={
-            "model": "qwen3-coder",
+            "model": "qwen2.5-coder:3b",
             "prompt": f"Explain this function concisely in one sentence:\n\n{function_source}",
             "stream": False
         }, timeout=5.0)
@@ -118,6 +118,7 @@ def enrich_function(func: dict) -> dict:
     file_path = func.get("file_path", "")
     params = func.get("params", [])
     decorators = func.get("decorators", [])
+    source = func.get("source", "")
 
     # Build context string for tag matching
     context = f"{name} {docstring} {file_path} {' '.join(params)} {' '.join(decorators)}".lower()
@@ -125,8 +126,15 @@ def enrich_function(func: dict) -> dict:
     # Generate tags
     tags = _match_tags(context)
 
-    # Generate summary
-    summary = _generate_summary(func, tags)
+    # Generate summary (Prefer LLM if available, otherwise heuristic)
+    summary = ""
+    if USE_LLM and source:
+        # Don't send huge functions to LLM to avoid timeout
+        if len(source) < 5000:
+            summary = _llm_summarize(source)
+    
+    if not summary:
+        summary = _generate_summary(func, tags)
 
     func["summary"] = summary
     func["tags"] = tags
@@ -148,6 +156,27 @@ def enrich_class(cls: dict) -> dict:
     cls["summary"] = summary
     cls["tags"] = tags
     return cls
+
+
+def enrich_node(node_data: dict, node_type: str) -> dict:
+    """
+    General entry point for enrichment.
+    Takes a dictionary of node data and returns it enriched.
+    """
+    if node_type == "Function":
+        return enrich_function(node_data)
+    elif node_type == "Class":
+        return enrich_class(node_data)
+    elif node_type == "File":
+        # For files, we assume all_tags might be empty unless provided
+        return enrich_file(
+            node_data.get("path", ""),
+            node_data.get("language", "unknown"),
+            node_data.get("num_functions", 0),
+            node_data.get("num_classes", 0),
+            node_data.get("child_tags", [])
+        )
+    return node_data
 
 
 def enrich_file(file_path: str, language: str,

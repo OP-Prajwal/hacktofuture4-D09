@@ -199,15 +199,25 @@ class CommitBody(BaseModel):
 def push_commit(workspace: str, project_name: str, body: CommitBody):
     """
     Creates a commit (snapshot) record in MongoDB.
-    Final step of `nexus push` — records which hashes make up this snapshot.
+    Final step of `nexus push`.
+    NOW: Automatically triggers background analysis so the LLM knows the repo instantly.
     """
     try:
         manifest_dicts = [f.model_dump() for f in body.manifest]
         commit_id = create_commit(workspace, project_name, manifest_dicts, body.metadata)
+        
+        # ─── AUTO-TRIGGER ANALYSIS ───
+        # This starts the LLM "learning" phase in the background immediately
+        try:
+            start_analysis_async(workspace, project_name, force=False)
+        except Exception as e:
+            print(f"[AUTO-ANALYSIS] Failed to trigger: {e}")
+
         return {
             "status": "committed",
             "commit_id": commit_id,
-            "total_files": len(body.manifest)
+            "total_files": len(body.manifest),
+            "auto_analysis": "triggered"
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -11,9 +11,9 @@ from db.neo4j_db import neo4j_db
 from .semantic_enricher import TAG_RULES
 
 # ── LLM Integration (Phase 3) ────────────────────────────────────────────────
-# Configured for deepseek-v3.1 as per requirements
-LLM_API_URL = "http://localhost:11434/api/generate"  # Mocking local DeepSeek
-USE_LLM = False  # Set to True when DeepSeek server is running
+# Configured for qwen2.5-coder:3b
+LLM_API_URL = "http://localhost:11434/api/generate"
+USE_LLM = True  # Set to True when Ollama server is running
 
 def ask_repository(workspace: str, project_name: str, question: str) -> dict:
     """
@@ -33,23 +33,32 @@ def ask_repository(workspace: str, project_name: str, question: str) -> dict:
             if tag not in relevant_tags:
                 relevant_tags.append(tag)
                 
-    # If no tags matched natively, we would ask LLM to generate a Cypher query.
-    # For now, default to searching functions if empty.
-    if not relevant_tags:
-        relevant_tags = ["API", "Utility", "Machine Learning", "Database"]
-        
+    project_path = f"{workspace}/{project_name}"
+
     # 2. Search graph for these tags
-    # Uses MATCH (n) WHERE any(tag IN n.tags WHERE tag IN $tags) 
-    query = """
-    MATCH (n {project: $path})
-    WHERE any(t IN n.tags WHERE t IN $tags)
-    RETURN n, labels(n) as labels LIMIT 15
-    """
+    if not relevant_tags:
+        # ── Fallback: Repo Overview ──
+        # If no specific tags match, fetch the most important/connected nodes.
+        # Use coalesce to handle cases where blast_radius might be missing on old nodes.
+        query = """
+        MATCH (n {project: $path})
+        RETURN n, labels(n) as labels
+        ORDER BY coalesce(n.blast_radius, 0) DESC
+        LIMIT 10
+        """
+        params = {"path": project_path}
+    else:
+        query = """
+        MATCH (n {project: $path})
+        WHERE any(t IN n.tags WHERE t IN $tags)
+        RETURN n, labels(n) as labels LIMIT 15
+        """
+        params = {"path": project_path, "tags": relevant_tags}
     
     try:
-        results = neo4j_db.run_query(query, {"path": project_path, "tags": relevant_tags})
+        results = neo4j_db.run_query(query, params)
     except Exception as e:
-        print(f"[CIG Query] Graph offline ({e}), returning mock topology.")
+        print(f"[CIG Query] Graph offline ({e}), returning empty.")
         results = []
         
     context_nodes = []
@@ -68,52 +77,77 @@ def ask_repository(workspace: str, project_name: str, question: str) -> dict:
             "file": node.get("file_path", "")
         })
         
-    # 3. Expand neighbors (Call graph relationships)
-    expanded_edges = []
+    # 3. Deep Traversal (Path Tracing)
+    # We don't just want neighbors; we want to see the "flow"
+    trace_map = []
     if node_ids and results:
-        neighbor_query = """
-        MATCH (a)-[r:CALLS|IMPORTS|EXTENDS]->(b)
-        WHERE (a.project = $path) AND (a.qualified_name IN $nodes OR b.qualified_name IN $nodes)
-        RETURN a.qualified_name as caller, type(r) as rel, b.qualified_name as callee LIMIT 20
+        # Find paths up to 2 hops away to trace the logic flow
+        path_query = """
+        MATCH p = (a)-[r:CALLS|IMPORTS|EXTENDS*1..2]->(b)
+        WHERE (a.project = $path) 
+          AND (a.qualified_name IN $nodes)
+          AND (a <> b)
+        RETURN 
+            [n in nodes(p) | n.qualified_name] as path_nodes,
+            [rel in relationships(p) | type(rel)] as rel_types
+        LIMIT 15
         """
         try:
-            edges = neo4j_db.run_query(neighbor_query, {"path": project_path, "nodes": node_ids})
-            for edge in edges:
-                expanded_edges.append(f"{edge['caller']} -> {edge['rel']} -> {edge['callee']}")
-        except Exception:
-            pass
+            paths = neo4j_db.run_query(path_query, {"path": project_path, "nodes": node_ids})
+            for entry in paths:
+                steps = []
+                p_nodes = entry['path_nodes']
+                p_rels = entry['rel_types']
+                for i in range(len(p_rels)):
+                    steps.append(f"{p_nodes[i]} --[{p_rels[i]}]--> {p_nodes[i+1]}")
+                trace_map.append(" -> ".join(steps))
+        except Exception as e:
+            print(f"[CIG Query] Traversal failed: {e}")
 
-    # Build context prompt
-    context_str = "Codebase Context extracted from graph:\n\n"
+    # Build context prompt with structural hierarchy
+    context_str = "### Codebase Architectural Map\n\n"
+    context_str += "#### Core Components:\n"
     for cn in context_nodes:
-        context_str += f"- [{cn['type']}] {cn['name']} (File: {cn['file']})\n"
+        context_str += f"- {cn['name']} ({cn['type']})\n"
         context_str += f"  Summary: {cn['summary']}\n"
-        context_str += f"  Tags: {', '.join(cn['tags'])}\n\n"
+        if cn['tags']:
+            context_str += f"  Roles: {', '.join(cn['tags'])}\n"
+        context_str += "\n"
         
-    if expanded_edges:
-        context_str += "Relationships:\n" + "\n".join(f"- {e}" for e in expanded_edges) + "\n\n"
+    if trace_map:
+        context_str += "#### Logic Flow & Dependencies:\n"
+        for trace in list(set(trace_map))[:10]: # De-duplicate and limit
+            context_str += f"- {trace}\n"
+        context_str += "\n"
 
     # 4. Ask LLM
     answer = ""
-    prompt = f"User Question: {question}\n\n{context_str}\n\nAnswer the user's question based strictly on the codebase context provided above."
+    # Instruct the LLM to think like an architect using the graph paths
+    system_instruction = (
+        "You are an expert software architect. You have been provided with a knowledge graph "
+        "of a codebase. Use the 'Core Components' and 'Logic Flow' sections to trace how "
+        "the code works. Explain your answer by referencing specific components and their connections."
+    )
+    
+    prompt = f"{system_instruction}\n\nUser Question: {question}\n\n{context_str}\n\nFinal Answer:"
     
     if USE_LLM:
         try:
             response = requests.post(LLM_API_URL, json={
-                "model": "deepseek-v3.1",
+                "model": "qwen2.5-coder:3b",
                 "prompt": prompt,
                 "stream": False
             }, timeout=30.0)
             answer = response.json().get("response", "").strip()
         except Exception as e:
-            answer = f"Error reaching DeepSeek LLM: {e}"
+            answer = f"Error reaching local LLM: {e}"
     else:
         # Mock LLM response if offline
         if not context_nodes:
             answer = "I couldn't find relevant code related to your question in the graph."
         else:
             names = [n["name"] for n in context_nodes[:3]]
-            answer = f"[Mock DeepSeek-v3.1 Response]\nBased on the graph, I see relevance in these components: {', '.join(names)}. " \
+            answer = f"[Mock qwen2.5-coder:3b Response]\nBased on the graph, I see relevance in these components: {', '.join(names)}. " \
                      f"They match tags like {', '.join(relevant_tags)}."
 
     return {

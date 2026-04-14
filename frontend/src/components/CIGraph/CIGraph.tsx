@@ -1,8 +1,5 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
-import Graph from 'graphology';
-import Sigma from 'sigma';
-import EdgeCurveProgram from '@sigma/edge-curve';
-import forceAtlas2 from 'graphology-layout-forceatlas2';
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import ForceGraph2D from 'react-force-graph-2d';
 
 const STATUS_COLOR = {
   SAFE: '#3fb950',
@@ -12,186 +9,91 @@ const STATUS_COLOR = {
 };
 
 export function CIGraph({ graphData }: { graphData: any }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const sigmaRef = useRef<Sigma | null>(null);
-  const graphRef = useRef<Graph>(new Graph());
-
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState('all');
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
+  const [hoveredLink, setHoveredLink] = useState<any | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      if (!entries || entries.length === 0) return;
+      const { width, height } = entries[0].contentRect;
+      setDimensions({ width, height });
+    });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  // Filter nodes based on search
+  const filteredData = useMemo(() => {
+    if (!graphData?.nodes) return { nodes: [], links: [] };
+
+    const nodes = graphData.nodes.map((n: any) => ({
+      ...n,
+      id: n.id,
+      name: n.data?.label || n.id,
+      color: STATUS_COLOR[n.data?.status as keyof typeof STATUS_COLOR] || STATUS_COLOR.PENDING,
+      val: 5 + Math.min(n.data?.blast_radius || 0, 20),
+      hidden: search && !(n.data?.label?.toLowerCase().includes(search.toLowerCase()))
+    }));
+
+    // Find all links between visible nodes
+    const links = (graphData.edges || []).map((e: any) => ({
+      source: e.source,
+      target: e.target,
+      color: 'rgba(61, 68, 77, 0.3)'
+    }));
+
+    return { nodes, links };
+  }, [graphData, search]);
 
   const selectedNodeData = useMemo(() => {
     if (!selectedNodeId || !graphData?.nodes) return null;
     return graphData.nodes.find((n: any) => n.id === selectedNodeId);
   }, [selectedNodeId, graphData]);
 
-  // Sync data to Graph
-  const syncGraphData = () => {
-    const graph = graphRef.current;
-    if (!graphData?.nodes) return;
-    graph.clear();
-    const nodeCount = graphData.nodes.length;
-    const spread = Math.sqrt(nodeCount) * 160;
-
-    graphData.nodes.forEach((n: any, i: number) => {
-      const angle = i * (Math.PI * (3 - Math.sqrt(5)));
-      const radius = spread * Math.sqrt((i + 1) / Math.max(nodeCount, 1));
-      const status = n.data?.status || 'PENDING';
-      const color = STATUS_COLOR[status as keyof typeof STATUS_COLOR] || STATUS_COLOR.PENDING;
-      
-      let displayLabel = n.data?.label || n.id;
-      if (n.data?.type === 'Function') displayLabel = `ƒ ${displayLabel}`;
-      else if (n.data?.type === 'Module' && !displayLabel.includes('Cluster')) displayLabel = `📁 ${displayLabel}`;
-
-      graph.addNode(n.id, {
-        x: radius * Math.cos(angle),
-        y: radius * Math.sin(angle),
-        size: 8 + Math.min(n.data?.blast_radius || 0, 15),
-        color: color,
-        label: displayLabel,
-        data: n.data,
-        zIndex: 0
+  // Highlighting logic
+  const highlightNodes = useMemo(() => {
+    const set = new Set();
+    if (hoveredNode) {
+      set.add(hoveredNode);
+      // Add neighbors
+      (graphData.edges || []).forEach((e: any) => {
+        if (e.source === hoveredNode) set.add(e.target);
+        if (e.target === hoveredNode) set.add(e.source);
       });
-    });
-
-    (graphData.edges || []).forEach((e: any) => {
-      if (graph.hasNode(e.source) && graph.hasNode(e.target)) {
-        graph.addEdge(e.source, e.target, { size: 1, color: 'rgba(61,68,77,0.3)', type: 'curved' });
-      }
-    });
-
-    forceAtlas2.assign(graph, {
-      iterations: 200,
-      settings: { ...forceAtlas2.inferSettings(graph), adjustSizes: true, scalingRatio: 30 }
-    });
-  };
-
-  useEffect(() => {
-    if (!containerRef.current || !graphData) return;
-
-    if (graphRef.current.order === 0) syncGraphData();
-
-    if (!sigmaRef.current) {
-      const sigma = new Sigma(graphRef.current, containerRef.current, {
-        defaultNodeType: 'circle',
-        defaultEdgeType: 'curved',
-        edgeProgramClasses: { curved: EdgeCurveProgram },
-        labelFont: "'JetBrains Mono', monospace",
-        labelColor: { color: '#8b949e' },
-        labelSize: 11,
-        allowInvalidContainer: true,
-        renderLabels: true,
-        zIndex: true
-      });
-
-      sigmaRef.current = sigma;
-
-      // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      // CLEAN ROOM INTERACTION LOGIC
-      // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      let draggedNode: string | null = null;
-
-      sigma.on("downNode", (e) => {
-        draggedNode = e.node;
-        graphRef.current.setNodeAttribute(draggedNode, "zIndex", 10);
-        
-        // KILL SIGMA'S CAMERA IMMEDIATELY
-        sigma.getMouseCaptor().enabled = false;
-        
-        // STOP propagation to prevent camera from starting a pan
-        if (e.event && e.event.originalEvent) {
-          e.event.originalEvent.stopPropagation();
-          e.event.originalEvent.stopImmediatePropagation();
-        }
-      });
-
-      const onMouseMove = (e: MouseEvent) => {
-        if (!draggedNode || !containerRef.current) return;
-        
-        const rect = containerRef.current.getBoundingClientRect();
-        const pos = sigma.viewportToGraph({
-          x: e.clientX - rect.left,
-          y: e.clientY - rect.top,
-        });
-
-        graphRef.current.setNodeAttribute(draggedNode, "x", pos.x);
-        graphRef.current.setNodeAttribute(draggedNode, "y", pos.y);
-        
-        // Force refresh for smooth movement
-        sigma.refresh();
-      };
-
-      const onMouseUp = () => {
-        if (draggedNode) {
-          graphRef.current.setNodeAttribute(draggedNode, "zIndex", 0);
-          draggedNode = null;
-          // Re-enable camera only after interaction is finished
-          sigma.getMouseCaptor().enabled = true;
-          sigma.refresh();
-        }
-      };
-
-      // Use window listeners for "capture-all" dragging
-      window.addEventListener("mousemove", onMouseMove);
-      window.addEventListener("mouseup", onMouseUp);
-
-      sigma.on("clickNode", (e) => setSelectedNodeId(e.node));
-      sigma.on("clickStage", () => setSelectedNodeId(null));
-      sigma.on("enterNode", (e) => {
-        setHoveredNode(e.node);
-        if (containerRef.current) containerRef.current.style.cursor = "pointer";
-      });
-      sigma.on("leaveNode", () => {
-        setHoveredNode(null);
-        if (containerRef.current) containerRef.current.style.cursor = "grab";
-      });
-
-      sigma.getCamera().animatedZoom({ factor: 1.2, duration: 600 });
-
-      return () => {
-        window.removeEventListener("mousemove", onMouseMove);
-        window.removeEventListener("mouseup", onMouseUp);
-        sigma.kill();
-        sigmaRef.current = null;
-      };
-    } else {
-      syncGraphData();
-      sigmaRef.current.refresh();
     }
-  }, [graphData]);
+    return set;
+  }, [hoveredNode, graphData.edges]);
 
-  // WebGL Reducers for Highlighting
-  useEffect(() => {
-    const sigma = sigmaRef.current;
-    if (!sigma) return;
-    const graph = graphRef.current;
-
-    sigma.setSetting("nodeReducer", (node, data) => {
-      const res: any = { ...data };
-      const matchesSearch = !search || (res.label && res.label.toLowerCase().includes(search.toLowerCase()));
-      if (!matchesSearch) { res.hidden = true; res.label = ""; }
-
-      if (hoveredNode) {
-        if (node === hoveredNode || graph.areNeighbors(hoveredNode, node)) {
-          res.zIndex = 1;
-        } else {
-          res.label = "";
-          res.color = "#21262d";
-          res.opacity = 0.2;
+  const highlightLinks = useMemo(() => {
+    const set = new Set();
+    if (hoveredNode) {
+      (graphData.edges || []).forEach((e: any) => {
+        if (e.source === hoveredNode || e.target === hoveredNode) {
+          // In react-force-graph, links are objects, but we can match by source/target
+          // However, it's better to match the actual link objects if possible.
         }
-      }
-      return res;
-    });
+      });
+    }
+    return set;
+  }, [hoveredNode, graphData.edges]);
 
-    sigma.setSetting("edgeReducer", (edge, data) => {
-      const res: any = { ...data };
-      if (hoveredNode && !graph.hasExtremity(edge, hoveredNode)) res.hidden = true;
-      return res;
-    });
-
-    sigma.refresh();
-  }, [search, hoveredNode]);
+  // Fallback for empty/black screen
+  if (!graphData || !graphData.nodes || graphData.nodes.length === 0) {
+    return (
+      <div style={{ width: '100%', height: '100%', background: '#0d1117', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ textAlign: 'center', fontFamily: "'JetBrains Mono', monospace" }}>
+          <div style={{ fontSize: '40px', marginBottom: '16px', opacity: 0.2 }}>🕸️</div>
+          <h3 style={{ color: '#8b949e', fontSize: '14px', margin: 0 }}>No Graph Snapshot Found</h3>
+          <p style={{ color: '#484f58', fontSize: '11px', marginTop: '8px' }}>Run the analysis to build your code intelligence graph.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ width: '100%', height: '100%', background: '#0d1117', display: 'flex', flexDirection: 'column' }}>
@@ -204,28 +106,107 @@ export function CIGraph({ graphData }: { graphData: any }) {
         />
         <div style={{ flex: 1 }} />
         <div style={{ display: 'flex', gap: 10 }}>
-          <span style={{ color: '#f85149', fontSize: 10 }}>● Critical</span>
-          <span style={{ color: '#d29922', fontSize: 10 }}>● Warning</span>
-          <span style={{ color: '#3fb950', fontSize: 10 }}>● Safe</span>
+          <span style={{ color: '#f85149', fontSize: 10, fontFamily: "'JetBrains Mono', monospace" }}>● Critical</span>
+          <span style={{ color: '#d29922', fontSize: 10, fontFamily: "'JetBrains Mono', monospace" }}>● Warning</span>
+          <span style={{ color: '#3fb950', fontSize: 10, fontFamily: "'JetBrains Mono', monospace" }}>● Safe</span>
         </div>
       </div>
 
-      <div style={{ flex: 1, position: 'relative', minHeight: 0, userSelect: 'none', overflow: 'hidden' }}>
-        <div 
-          ref={containerRef} 
-          style={{ width: '100%', height: '100%', background: '#0d1117', touchAction: 'none' }} 
+      <div ref={containerRef} style={{ flex: 1, position: 'relative', minHeight: 0, userSelect: 'none', overflow: 'hidden' }}>
+        <ForceGraph2D
+          width={dimensions.width || 800}
+          height={dimensions.height || 600}
+          graphData={filteredData}
+          backgroundColor="#0d1117"
+          nodeLabel={(n: any) => n.name}
+          nodeRelSize={1}
+          nodeVal={(n: any) => n.val}
+          nodeColor={(n: any) => {
+            if (n.hidden) return 'transparent';
+            if (hoveredNode && !highlightNodes.has(n.id)) return '#21262d';
+            return n.color;
+          }}
+          linkColor={(l: any) => {
+            if (hoveredNode) {
+              const isConnected = l.source.id === hoveredNode || l.target.id === hoveredNode;
+              return isConnected ? '#58a6ff' : 'rgba(33, 38, 45, 0.2)';
+            }
+            return 'rgba(61, 68, 77, 0.3)';
+          }}
+          linkWidth={(l: any) => {
+            if (hoveredNode) {
+              const isConnected = l.source.id === hoveredNode || l.target.id === hoveredNode;
+              return isConnected ? 2 : 1;
+            }
+            return 1;
+          }}
+          linkDirectionalParticles={(l: any) => {
+            if (hoveredNode) {
+              return (l.source.id === hoveredNode || l.target.id === hoveredNode) ? 4 : 0;
+            }
+            if (hoveredLink && l === hoveredLink) {
+              return 4;
+            }
+            return 0;
+          }}
+          linkDirectionalParticleWidth={2}
+          linkDirectionalParticleSpeed={0.005}
+          linkDirectionalArrowLength={3}
+          linkDirectionalArrowRelPos={1}
+          linkCurvature={0.25}
+          onNodeClick={(node: any) => setSelectedNodeId(node.id)}
+          onNodeHover={(node: any) => setHoveredNode(node ? node.id : null)}
+          onLinkHover={(link: any) => setHoveredLink(link)}
+          onBackgroundClick={() => setSelectedNodeId(null)}
+          nodeCanvasObject={(node: any, ctx, globalScale) => {
+            if (node.hidden) return;
+            const label = node.name;
+            const fontSize = 12 / globalScale;
+            ctx.font = `${fontSize}px 'JetBrains Mono', monospace`;
+            
+            // Draw circle
+            const r = Math.sqrt(node.val) * 2;
+            ctx.beginPath();
+            ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
+            ctx.fillStyle = (hoveredNode && !highlightNodes.has(node.id)) ? '#21262d' : node.color;
+            ctx.fill();
+
+            // Draw label if zoomed in or hovered
+            if (globalScale > 1.5 || (hoveredNode && highlightNodes.has(node.id))) {
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillStyle = (hoveredNode && highlightNodes.has(node.id)) ? '#e6edf3' : '#8b949e';
+              ctx.fillText(label, node.x, node.y + r + fontSize);
+            }
+          }}
         />
         
         {selectedNodeData && (
-          <div style={{ position: 'absolute', top: 0, right: 0, width: 320, height: '100%', background: 'rgba(22, 27, 34, 0.98)', borderLeft: '1px solid #30363d', padding: 24, zIndex: 20, boxShadow: '-8px 0 30px rgba(0,0,0,0.6)', overflowY: 'auto', fontFamily: "'JetBrains Mono', monospace", userSelect: 'text' }}>
+          <div style={{ position: 'absolute', top: 0, right: 0, width: 320, height: '100%', background: 'rgba(22, 27, 34, 0.98)', borderLeft: '1px solid #30363d', padding: 24, zIndex: 20, boxSizing: 'border-box', boxShadow: '-8px 0 30px rgba(0,0,0,0.6)', overflowY: 'auto', fontFamily: "'JetBrains Mono', monospace", userSelect: 'text' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
               <span style={{ color: '#e6edf3', fontSize: 14, fontWeight: 'bold' }}>{selectedNodeData.data?.label || selectedNodeId}</span>
               <button onClick={() => setSelectedNodeId(null)} style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: 18 }}>✕</button>
             </div>
             <div style={{ fontSize: 11, color: '#8b949e' }}>
-               <p>File: <span style={{ color: '#c9d1d9' }}>{selectedNodeData.data?.file}</span></p>
-               <p>Type: <span style={{ color: '#58a6ff' }}>{selectedNodeData.data?.type}</span></p>
-               <p>Blast: <span style={{ color: '#f85149' }}>{selectedNodeData.data?.blast_radius}</span></p>
+               <p style={{ marginBottom: '12px', lineHeight: '1.4', color: '#c9d1d9', fontSize: '12px' }}>
+                 {selectedNodeData.data?.summary || 'No description available.'}
+               </p>
+               
+               {selectedNodeData.data?.tags && selectedNodeData.data.tags.length > 0 && (
+                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '16px' }}>
+                   {selectedNodeData.data.tags.map((tag: string) => (
+                     <span key={tag} style={{ background: 'rgba(56, 139, 253, 0.1)', color: '#388bfd', padding: '2px 8px', borderRadius: '10px', fontSize: '9px', border: '1px solid rgba(56, 139, 253, 0.2)' }}>
+                       {tag}
+                     </span>
+                   ))}
+                 </div>
+               )}
+
+               <div style={{ height: '1px', background: '#30363d', margin: '16px 0' }} />
+
+               <p style={{ marginBottom: '8px' }}>File: <span style={{ color: '#c9d1d9' }}>{selectedNodeData.data?.file}</span></p>
+               <p style={{ marginBottom: '8px' }}>Type: <span style={{ color: '#58a6ff' }}>{selectedNodeData.data?.type}</span></p>
+               <p style={{ marginBottom: '8px' }}>Blast: <span style={{ color: '#f85149' }}>{selectedNodeData.data?.blast_radius}</span></p>
             </div>
           </div>
         )}

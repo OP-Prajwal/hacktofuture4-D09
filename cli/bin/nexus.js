@@ -239,6 +239,7 @@ program
         manifest,
         metadata: {
           push_source:  currentDir,
+          local_path:   currentDir,
           total_files:  fileRecords.length,
           new_blobs:    toUpload.length,
           skipped_blobs: skipped
