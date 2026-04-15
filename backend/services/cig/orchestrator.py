@@ -475,6 +475,9 @@ def _transform_gitnexus_graph(
     })
 
     node_ids = {project_path}
+    
+    # Noise Filter (Documentation and auto-generated files)
+    NOISE_FILES = {"CLAUDE.md", "AGENTS.md", "README.md", "LICENSE", ".gitnexus"}
 
     # 1. Process all raw nodes
     for n in raw_nodes:
@@ -482,6 +485,14 @@ def _transform_gitnexus_graph(
         if not node_id: continue
 
         label = n.get("label", "CodeElement")
+        file_path = n.get("filePath", "")
+        filename = file_path.replace("\\", "/").split("/")[-1]
+
+        # FILTER: Skip documentation noise and GitNexus internal files
+        if filename in NOISE_FILES or ".gitnexus" in file_path:
+            continue
+        if label == "Section": continue # Skip Markdown headers entirely
+
         nexus_type = TYPE_MAP.get(label, "Function")
 
         name = n.get("name", "")
@@ -490,8 +501,6 @@ def _transform_gitnexus_graph(
             name = parts[-1] if len(parts) > 1 else node_id.split(":")[-1]
             if "/" in name or "\\" in name:
                 name = name.replace("\\", "/").split("/")[-1]
-
-        file_path = n.get("filePath", "")
 
         node = {
             "id": node_id,
@@ -519,6 +528,7 @@ def _transform_gitnexus_graph(
 
     # 2. Process all edges & calculate degrees (blast_radius)
     degrees = {}
+    has_parent = set()
     for e in raw_edges:
         src = e.get("source", "")
         tgt = e.get("target", "")
@@ -527,8 +537,23 @@ def _transform_gitnexus_graph(
             graph_edges.append({"source": src, "target": tgt, "type": nexus_rel})
             degrees[src] = degrees.get(src, 0) + 1
             degrees[tgt] = degrees.get(tgt, 0) + 1
+            if nexus_rel in ("CONTAINS", "BELONGS_TO"):
+                has_parent.add(tgt)
 
-    # 3. Inject blast_radius
+    # 3. Connect Orphans to Project Root
+    # Ensure every file/folder is reachable from the Project node
+    for node in graph_nodes:
+        if node["id"] == project_path: continue
+        if node["type"] in ("File", "Module") and node["id"] not in has_parent:
+            graph_edges.append({
+                "source": project_path,
+                "target": node["id"],
+                "type": "CONTAINS"
+            })
+            degrees[project_path] = degrees.get(project_path, 0) + 1
+            degrees[node["id"]] = degrees.get(node["id"], 0) + 1
+
+    # 4. Inject blast_radius
     for node in graph_nodes:
         node["blast_radius"] = degrees.get(node["id"], 0)
 
@@ -761,7 +786,9 @@ def get_project_graph(workspace: str, project_name: str) -> dict:
         from db.neo4j_db import neo4j_db
         node_records = neo4j_db.run_query("""
             MATCH (n)
-            WHERE n.project = $path OR (labels(n)[0] = 'Project' AND n.path = $path)
+            WHERE (n.project = $path OR (labels(n)[0] = 'Project' AND n.path = $path))
+              AND NOT coalesce(n.file_path, '') CONTAINS '.gitnexus'
+              AND NOT n.name IN ['CLAUDE.md', 'AGENTS.md', '.gitnexus']
             RETURN
                 labels(n)[0] AS label,
                 coalesce(n.qualified_name, n.path, '') AS id,

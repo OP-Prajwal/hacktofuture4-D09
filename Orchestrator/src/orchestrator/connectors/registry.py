@@ -55,8 +55,7 @@ class ConnectorRegistry:
             print(f"Failed to load MCP config: {e}")
 
     def lookup_by_kind(
-...
-
+        self,
         kind: str,
         incident: IncidentInput,
         search_terms: list[str],
