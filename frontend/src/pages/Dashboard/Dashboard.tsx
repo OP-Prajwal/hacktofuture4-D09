@@ -4,6 +4,7 @@ import type { UserSession } from '../../App';
 import FileTree, { type TreeData, type FileNode } from '../../components/FileTree/FileTree';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import LiveTerminal from '../../components/LiveTerminal/LiveTerminal';
 import CIGraph from '../../components/CIGraph/CIGraph';
 
 interface ChatMessage {
@@ -127,12 +128,20 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
   const [fullScreenGraph, setFullScreenGraph] = useState(false);
 
   // AI Chat state
-  const [fgViewMode, setFgViewMode] = useState<'graph' | 'chat'>('graph');
+  const [fgViewMode, setFgViewMode] = useState<'graph' | 'chat' | 'terminal'>('graph');
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [chatSending, setChatSending] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
+
+  // Blast Radius state
+  const [blastFiles, setBlastFiles] = useState('');
+  const [blastResult, setBlastResult] = useState<Record<string, unknown> | null>(null);
+  const [blastLoading, setBlastLoading] = useState(false);
+
+  // Toast notification state
+  const [toast, setToast] = useState<string | null>(null);
 
   // Auto-scroll chat to bottom
   useEffect(() => {
@@ -404,6 +413,33 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
     }
   };
 
+  const handleBlastRadius = async () => {
+    const files = blastFiles.split(',').map(f => f.trim()).filter(Boolean);
+    if (files.length === 0) return;
+    setBlastLoading(true);
+    setBlastResult(null);
+    try {
+      const p = projects.find(x => x.id === activeProject);
+      if (!p) return;
+      const [workspace, project] = p.cloneCode.split('/');
+      const res = await fetch(`${BACKEND}/api/repo/${workspace}/${project}/blast-radius`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ changed_files: files })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setBlastResult(data);
+      } else {
+        setBlastResult({ error: 'Blast radius query failed' });
+      }
+    } catch {
+      setBlastResult({ error: 'Could not reach the backend' });
+    } finally {
+      setBlastLoading(false);
+    }
+  };
+
   const handleChatSend = async () => {
     const text = chatInput.trim();
     if (!text || chatSending) return;
@@ -586,14 +622,28 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                 )}
               </div>
 
-              {/* Show dependency graph button */}
-              <button className="nx-graph-toggle" onClick={() => setFgViewMode(fgViewMode === 'graph' ? 'chat' : 'graph')}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
-                  <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
-                </svg>
-                {fgViewMode === 'graph' ? 'Show AI chat' : 'Show dependency graph'} ↗
-              </button>
+              {/* View Mode Tabs */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <button className={`nx-graph-toggle ${fgViewMode === 'graph' ? 'active' : ''}`} onClick={() => setFgViewMode('graph')} style={fgViewMode === 'graph' ? { borderColor: 'var(--accent2)', color: 'var(--accent2)', background: 'rgba(var(--accent2-rgb), 0.05)' } : {}}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+                    <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+                  </svg>
+                  Graph
+                </button>
+                <button className={`nx-graph-toggle ${fgViewMode === 'chat' ? 'active' : ''}`} onClick={() => setFgViewMode('chat')} style={fgViewMode === 'chat' ? { borderColor: 'var(--accent2)', color: 'var(--accent2)', background: 'rgba(var(--accent2-rgb), 0.05)' } : {}}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+                  </svg>
+                  AI Agent
+                </button>
+                <button className={`nx-graph-toggle ${fgViewMode === 'terminal' ? 'active' : ''}`} onClick={() => setFgViewMode('terminal')} style={fgViewMode === 'terminal' ? { borderColor: '#3fb950', color: '#3fb950', background: 'rgba(63,185,80,0.05)' } : {}}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
+                  </svg>
+                  Terminal
+                </button>
+              </div>
 
               {/* Exit Dashboard Button */}
               <button className="nx-exit-btn" onClick={() => setFullScreenGraph(false)}>
@@ -607,22 +657,21 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
 
             {/* ═══ MAIN AREA ═══ */}
             <div className="nx-main">
-              {fgViewMode === 'graph' ? (
+              {fgViewMode === 'graph' && (
                 <>
                   <div className="nx-chat-header">
                     <div>
                       <h2>Knowledge Graph</h2>
                       <p>Visual dependency map of your codebase</p>
                     </div>
-                    <button className="nx-fullgraph-btn" onClick={() => setFgViewMode('chat')}>
-                      AI Agent ↗
-                    </button>
                   </div>
                   <div className="nx-graph-area">
                     <CIGraph graphData={graphData} />
                   </div>
                 </>
-              ) : (
+              )}
+
+              {fgViewMode === 'chat' && (
                 <>
                   {/* Chat Header */}
                   <div className="nx-chat-header">
@@ -630,14 +679,10 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                       <h2>Agent</h2>
                       <p>Ask anything about your repo</p>
                     </div>
-                    <button className="nx-fullgraph-btn" onClick={() => setFgViewMode('graph')}>
-                      Full graph ↗
-                    </button>
                   </div>
 
                   {/* Chat Body */}
                   <div className="nx-chat-body">
-                    {/* Welcome message — always shown */}
                     {chatMessages.length === 0 && (
                       <div className="nx-ai-card">
                         <div className="nx-ai-label">NEXUS</div>
@@ -655,7 +700,6 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                       </div>
                     )}
 
-                    {/* Messages */}
                     {chatMessages.map(msg => (
                       msg.role === 'user' ? (
                         <div key={msg.id} className="nx-user-bubble">
@@ -711,6 +755,25 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                   </div>
                 </>
               )}
+
+              {fgViewMode === 'terminal' && (() => {
+                const p = projects.find(x => x.id === activeProject);
+                if (!p) return null;
+                const [ws, proj] = p.cloneCode.split('/');
+                return (
+                  <>
+                    <div className="nx-chat-header">
+                      <div>
+                        <h2>CI/CD Terminal</h2>
+                        <p>Live logs from your production runner</p>
+                      </div>
+                    </div>
+                    <div style={{ flex: 1, overflow: 'hidden' }}>
+                      <LiveTerminal workspace={ws} project={proj} />
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           </div>
         </div>
@@ -916,6 +979,61 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                       )}
                     </div>
                   </div>
+
+                  {/* ── Blast Radius CI Acceleration ── */}
+                  {(graphData?.nodes?.length || 0) > 0 && (
+                    <div className="blast-radius-card" style={{marginTop: '16px'}}>
+                      <h4>⚡ Blast Radius — CI Acceleration</h4>
+                      <p style={{fontSize: '11px', color: '#8b949e', marginBottom: '12px'}}>
+                        Enter changed file names to calculate impact and skip unaffected tests.
+                      </p>
+                      <div className="blast-radius-input">
+                        <input
+                          type="text"
+                          className="dash-input"
+                          placeholder="e.g. auth.py, main.py"
+                          value={blastFiles}
+                          onChange={e => setBlastFiles(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && handleBlastRadius()}
+                          style={{flex: 1}}
+                        />
+                        <button className="btn-dash-secondary" onClick={handleBlastRadius} disabled={blastLoading}>
+                          {blastLoading ? 'Analyzing...' : 'Calculate'}
+                        </button>
+                      </div>
+
+                      {blastResult && !blastResult.error && (
+                        <div className="blast-radius-result">
+                          <span className={`risk-badge ${(blastResult as Record<string, unknown>).risk_level}`}>
+                            {(blastResult as Record<string, unknown>).risk_level as string} RISK
+                          </span>
+                          <div className="blast-files-grid">
+                            <div className="blast-file-list">
+                              <h5>🔴 Affected Files</h5>
+                              {((blastResult as Record<string, unknown>).affected_files as string[] || []).map((f: string, i: number) => (
+                                <div key={i} className="file-item affected">{f}</div>
+                              ))}
+                            </div>
+                            <div className="blast-file-list">
+                              <h5>🟢 Safe to Skip</h5>
+                              {((blastResult as Record<string, unknown>).unaffected_files as string[] || []).map((f: string, i: number) => (
+                                <div key={i} className="file-item safe">{f}</div>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="blast-recommendation">
+                            💡 {(blastResult as Record<string, unknown>).recommendation as string}
+                          </div>
+                        </div>
+                      )}
+
+                      {blastResult?.error && (
+                        <div style={{color: '#f85149', fontSize: '12px', padding: '8px'}}>
+                          {blastResult.error as string}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* ── Functions Discovery (Middle Screen) ── */}
                   <div className="functions-discovery-main" style={{marginTop: '30px'}}>

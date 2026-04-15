@@ -1,0 +1,313 @@
+/* ── Live Terminal ── */
+.live-terminal-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #0d1117;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.live-terminal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+}
+
+.live-terminal-header .terminal-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: #e6edf3;
+}
+
+.live-terminal-header .terminal-title .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #3fb950;
+  animation: pulse-dot 2s infinite;
+}
+
+.live-terminal-header .terminal-title .dot.idle {
+  background: #8b949e;
+  animation: none;
+}
+
+.live-terminal-header .terminal-title .dot.failed {
+  background: #f85149;
+  animation: pulse-dot 1s infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.live-terminal-header .terminal-status {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-weight: 600;
+}
+
+.terminal-status.running {
+  background: rgba(56, 139, 253, 0.15);
+  color: #58a6ff;
+  border: 1px solid rgba(56, 139, 253, 0.3);
+}
+
+.terminal-status.success {
+  background: rgba(63, 185, 80, 0.15);
+  color: #3fb950;
+  border: 1px solid rgba(63, 185, 80, 0.3);
+}
+
+.terminal-status.failed {
+  background: rgba(248, 81, 73, 0.15);
+  color: #f85149;
+  border: 1px solid rgba(248, 81, 73, 0.3);
+}
+
+.terminal-status.idle {
+  background: rgba(139, 148, 158, 0.15);
+  color: #8b949e;
+  border: 1px solid rgba(139, 148, 158, 0.3);
+}
+
+.live-terminal-body {
+  flex: 1;
+  padding: 8px;
+  overflow: hidden;
+}
+
+.live-terminal-body .xterm {
+  height: 100%;
+}
+
+/* ── Diagnosis Panel ── */
+.diagnosis-panel {
+  border-top: 1px solid #30363d;
+  background: #161b22;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.diagnosis-panel h4 {
+  margin: 0 0 12px 0;
+  font-size: 13px;
+  color: #f85149;
+  font-family: 'JetBrains Mono', monospace;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.diagnosis-hypothesis {
+  background: rgba(248, 81, 73, 0.05);
+  border: 1px solid rgba(248, 81, 73, 0.15);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 8px;
+}
+
+.diagnosis-hypothesis .hypo-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e6edf3;
+  margin-bottom: 6px;
+}
+
+.diagnosis-hypothesis .hypo-confidence {
+  font-size: 10px;
+  color: #f0883e;
+  font-family: 'JetBrains Mono', monospace;
+  margin-bottom: 8px;
+}
+
+.diagnosis-hypothesis .hypo-evidence {
+  font-size: 11px;
+  color: #8b949e;
+  margin-bottom: 4px;
+  padding-left: 12px;
+  border-left: 2px solid #30363d;
+}
+
+.diagnosis-hypothesis .hypo-locations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.diagnosis-hypothesis .hypo-locations .loc-pill {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  padding: 2px 8px;
+  background: rgba(56, 139, 253, 0.1);
+  color: #58a6ff;
+  border: 1px solid rgba(56, 139, 253, 0.2);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.diagnosis-hypothesis .hypo-locations .loc-pill:hover {
+  background: rgba(56, 139, 253, 0.25);
+}
+
+.diagnosis-hypothesis .hypo-steps {
+  margin-top: 8px;
+  padding-left: 16px;
+}
+
+.diagnosis-hypothesis .hypo-steps li {
+  font-size: 11px;
+  color: #8b949e;
+  margin-bottom: 3px;
+}
+
+/* ── Blast Radius Card ── */
+.blast-radius-card {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 12px;
+  padding: 16px;
+  margin-top: 12px;
+}
+
+.blast-radius-card h4 {
+  margin: 0 0 12px 0;
+  font-size: 13px;
+  color: #e6edf3;
+}
+
+.blast-radius-input {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.blast-radius-result {
+  padding: 12px;
+  background: #0d1117;
+  border-radius: 8px;
+  border: 1px solid #21262d;
+}
+
+.blast-radius-result .risk-badge {
+  display: inline-block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 12px;
+  margin-bottom: 10px;
+}
+
+.risk-badge.CRITICAL {
+  background: rgba(248, 81, 73, 0.15);
+  color: #f85149;
+  border: 1px solid rgba(248, 81, 73, 0.3);
+}
+.risk-badge.HIGH {
+  background: rgba(240, 136, 62, 0.15);
+  color: #f0883e;
+  border: 1px solid rgba(240, 136, 62, 0.3);
+}
+.risk-badge.MEDIUM {
+  background: rgba(210, 153, 34, 0.15);
+  color: #d29922;
+  border: 1px solid rgba(210, 153, 34, 0.3);
+}
+.risk-badge.LOW {
+  background: rgba(63, 185, 80, 0.15);
+  color: #3fb950;
+  border: 1px solid rgba(63, 185, 80, 0.3);
+}
+
+.blast-files-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.blast-file-list h5 {
+  margin: 0 0 6px 0;
+  font-size: 11px;
+  color: #8b949e;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.blast-file-list .file-item {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  padding: 3px 8px;
+  margin-bottom: 3px;
+  border-radius: 4px;
+}
+
+.blast-file-list .file-item.affected {
+  background: rgba(248, 81, 73, 0.08);
+  color: #f85149;
+  border-left: 2px solid #f85149;
+}
+
+.blast-file-list .file-item.safe {
+  background: rgba(63, 185, 80, 0.08);
+  color: #3fb950;
+  border-left: 2px solid #3fb950;
+}
+
+.blast-recommendation {
+  margin-top: 10px;
+  font-size: 11px;
+  color: #8b949e;
+  padding: 8px;
+  background: rgba(56, 139, 253, 0.05);
+  border: 1px solid rgba(56, 139, 253, 0.15);
+  border-radius: 6px;
+}
+
+/* ── Toast notification ── */
+.nx-toast {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 10000;
+  background: #161b22;
+  border: 1px solid #f85149;
+  border-radius: 12px;
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 8px 32px rgba(248, 81, 73, 0.2);
+  animation: slideInToast 0.4s ease-out;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: #f85149;
+  max-width: 400px;
+}
+
+.nx-toast .toast-close {
+  background: none;
+  border: none;
+  color: #8b949e;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 0 4px;
+}
+
+@keyframes slideInToast {
+  from { transform: translateX(120%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}

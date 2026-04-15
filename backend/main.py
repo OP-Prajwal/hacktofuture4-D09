@@ -1,5 +1,5 @@
 import json
-from fastapi import FastAPI, HTTPException, Request, Depends, Response
+from fastapi import FastAPI, HTTPException, Request, Depends, Response, WebSocket, WebSocketDisconnect
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -290,6 +290,63 @@ def query_project(workspace: str, project_name: str, body: QueryRequest):
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# ─── Blast Radius API ─────────────────────────────────────────────────────────
+
+from services.cig.blast_radius import calculate_blast_radius
+
+class BlastRadiusRequest(BaseModel):
+    changed_files: List[str]
+
+@app.post("/api/repo/{workspace}/{project_name}/blast-radius")
+def blast_radius(workspace: str, project_name: str, body: BlastRadiusRequest):
+    """Calculate the blast radius of changed files using the knowledge graph."""
+    try:
+        project_path = f"{workspace}/{project_name}"
+        result = calculate_blast_radius(project_path, body.changed_files)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── WebSocket — Live CI/CD Terminal ──────────────────────────────────────────
+
+from services.runner_hub import runner_hub
+
+@app.websocket("/ws/runner/{workspace}/{project_name}")
+async def ws_runner(websocket: WebSocket, workspace: str, project_name: str):
+    """WebSocket endpoint for CI/CD runners to stream logs."""
+    await runner_hub.connect_runner(websocket, workspace, project_name)
+    try:
+        while True:
+            data = await websocket.receive_json()
+            await runner_hub.handle_runner_message(workspace, project_name, data)
+    except WebSocketDisconnect:
+        await runner_hub.disconnect_runner(workspace, project_name)
+    except Exception:
+        await runner_hub.disconnect_runner(workspace, project_name)
+
+
+@app.websocket("/ws/viewer/{workspace}/{project_name}")
+async def ws_viewer(websocket: WebSocket, workspace: str, project_name: str):
+    """WebSocket endpoint for dashboard viewers to watch live logs."""
+    await runner_hub.connect_viewer(websocket, workspace, project_name)
+    try:
+        while True:
+            # Viewers can send commands (e.g., request log replay)
+            data = await websocket.receive_text()
+            # For now, just keep the connection alive
+    except WebSocketDisconnect:
+        await runner_hub.disconnect_viewer(websocket, workspace, project_name)
+    except Exception:
+        await runner_hub.disconnect_viewer(websocket, workspace, project_name)
+
+
+@app.get("/api/repo/{workspace}/{project_name}/runner/status")
+def get_runner_status(workspace: str, project_name: str):
+    """Get the current CI/CD runner status for a project."""
+    return runner_hub.get_status(workspace, project_name)
+
 
 # ─── Health / test routes ─────────────────────────────────────────────────────
 
