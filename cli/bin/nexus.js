@@ -15,7 +15,8 @@ const CONFIG_FILE = 'config.json';
 
 const IGNORED_DIRS = new Set([
   '.git', 'node_modules', '.nexus', '__pycache__',
-  '.venv', 'venv', 'dist', 'build', '.next', 'coverage', '.cache'
+  '.venv', 'venv', 'dist', 'build', '.next', 'coverage', '.cache',
+  '.gitnexus', '.claude'
 ]);
 
 const BINARY_EXTENSIONS = new Set([
