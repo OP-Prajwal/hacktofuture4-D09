@@ -40,11 +40,7 @@ def decode_access_token(token: str):
     except jwt.PyJWTError:
         return None
 
-def generate_slug(name: str):
-    slug = name.lower()
-    slug = re.sub(r'[^a-z0-9]+', '-', slug)
-    slug = slug.strip('-')
-    return slug
+# Slugs deprecated. Using plain workspace names.
 
 def register_user(workspace_type: str, email: str, password: str, name: str, company: str, role: str):
     email = normalize_email(email)
@@ -56,17 +52,17 @@ def register_user(workspace_type: str, email: str, password: str, name: str, com
         raise ValueError("User with this email already exists")
     
     workspace_name = company if workspace_type == 'enterprise' else f"{name}'s Workspace"
-    workspace_slug = generate_slug(workspace_name)
+    workspace_id = workspace_name.strip()
     
-    # Ensure workspace_slug is unique
-    base_slug = workspace_slug
+    # Ensure workspace_id is unique
+    base_slug = workspace_id
     counter = 1
-    while workspaces.find_one({"slug": workspace_slug}):
-        workspace_slug = f"{base_slug}-{counter}"
+    while workspaces.find_one({"workspace": workspace_id}): # Check new primary key 'workspace'
+        workspace_id = f"{base_slug} {counter}"
         counter += 1
         
     workspace_doc = {
-        "slug": workspace_slug,
+        "workspace": workspace_id,
         "name": workspace_name,
         "type": workspace_type,
         "created_at": datetime.utcnow()
@@ -79,13 +75,13 @@ def register_user(workspace_type: str, email: str, password: str, name: str, com
         "hashed_password": hashed_pass,
         "name": name,
         "role": role,
-        "workspace_slug": workspace_slug,
+        "workspace": workspace_id,
         "created_at": datetime.utcnow()
     }
     users.insert_one(user_doc)
     
     # Generate token
-    token = create_access_token({"sub": email, "workspace": workspace_slug})
+    token = create_access_token({"sub": email, "workspace": workspace_id})
     
     return {
         "access_token": token,
@@ -95,7 +91,7 @@ def register_user(workspace_type: str, email: str, password: str, name: str, com
             "role": role,
             "company": company,
             "type": workspace_type,
-            "workspace": workspace_slug
+            "workspace": workspace_id
         }
     }
 
@@ -109,9 +105,10 @@ def login_user(email: str, password: str):
         raise ValueError("Incorrect email or password")
         
     workspaces = mongo.get_collection("workspaces")
-    workspace = workspaces.find_one({"slug": user["workspace_slug"]})
-    
-    token = create_access_token({"sub": email, "workspace": user["workspace_slug"]})
+    # Legacy migration support: try "workspace", fallback to "workspace_id"
+    workspace_id = user.get("workspace", user.get("workspace_id"))
+    workspace = workspaces.find_one({"workspace": workspace_id}) or workspaces.find_one({"slug": workspace_id})
+    token = create_access_token({"sub": email, "workspace": workspace_id})
     
     company_name = workspace["name"] if workspace["type"] == "enterprise" else ""
     return {
@@ -122,6 +119,6 @@ def login_user(email: str, password: str):
             "role": user["role"],
             "company": company_name,
             "type": workspace["type"],
-            "workspace": user["workspace_slug"]
+            "workspace": workspace_id
         }
     }

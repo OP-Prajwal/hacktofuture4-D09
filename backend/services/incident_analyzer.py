@@ -166,7 +166,7 @@ def trigger_incident_analysis(
         print(f"[AutoHeal] Orchestrator not available: {e}")
         diagnosis = _fallback_analysis(workspace, project, logs, error_lines, error_summary, incident_id)
 
-    except Exception as e:
+    except BaseException as e:
         print(f"[AutoHeal] Analysis failed: {e}")
         import traceback
         traceback.print_exc()

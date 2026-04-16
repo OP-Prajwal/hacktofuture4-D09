@@ -227,7 +227,7 @@ const Onboarding = ({ onLaunch }: OnboardingProps) => {
 
                 <div className="field-group mt-3">
                   <div className="field-label"><span className="req">→</span> FULL_NAME</div>
-                  <input className="field-input" placeholder="e.g. Arjun Mehta" value={ind.name} onChange={e => setInd({...ind, name: e.target.value})} />
+                  <input className="field-input" placeholder="e.g. Arjun Mehta" value={ind.name} onChange={e => setInd({...ind, name: e.target.value.replace(/\//g, '')})} />
                 </div>
                 <div className="field-group">
                   <div className="field-label"><span className="req">→</span> EMAIL</div>
@@ -264,12 +264,12 @@ const Onboarding = ({ onLaunch }: OnboardingProps) => {
 
                 <div className="field-group mt-3">
                   <div className="field-label"><span className="req">→</span> COMPANY_NAME</div>
-                  <input className="field-input" placeholder="e.g. Acme Corp" value={ent.company} onChange={e => setEnt({...ent, company: e.target.value})} />
+                  <input className="field-input" placeholder="e.g. Acme Corp" value={ent.company} onChange={e => setEnt({...ent, company: e.target.value.replace(/\//g, '')})} />
                 </div>
                 <div className="two-col">
                   <div className="field-group">
                     <div className="field-label"><span className="req">→</span> YOUR_NAME</div>
-                    <input className="field-input" placeholder="Priya K." value={ent.name} onChange={e => setEnt({...ent, name: e.target.value})} />
+                    <input className="field-input" placeholder="Priya K." value={ent.name} onChange={e => setEnt({...ent, name: e.target.value.replace(/\//g, '')})} />
                   </div>
                   <div className="field-group">
                     <div className="field-label"><span className="req">→</span> YOUR_EMAIL</div>

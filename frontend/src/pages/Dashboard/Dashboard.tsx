@@ -17,6 +17,18 @@ interface ChatMessage {
 
 const BACKEND = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
 
+/** Split a verbatim cloneCode like "Mohit's Workspace/TESTK" into [workspace, project]. */
+function parseCloneCode(cloneCode: string): [string, string] {
+  const idx = cloneCode.indexOf('/');
+  return [cloneCode.substring(0, idx), cloneCode.substring(idx + 1)];
+}
+
+/** Build a URL-safe API prefix: /api/repo/<encoded workspace>/<encoded project> */
+function repoApi(cloneCode: string): string {
+  const [ws, proj] = parseCloneCode(cloneCode);
+  return `${BACKEND}/api/repo/${encodeURIComponent(ws)}/${encodeURIComponent(proj)}`;
+}
+
 export interface GraphNodeData {
   type: string;
   label: string;
@@ -124,48 +136,7 @@ const getLanguage = (filename: string) => {
   }
 };
 
-const buildIncidentMarkdown = (data: IncidentDetail): string => {
-  let md = `# 🚨 AI Forensic Report: ${data.incident_id}\n\n`;
-  md += `**Time:** ${new Date(data.created_at).toLocaleString()}\n`;
-  md += `**Status:** ${data.status}\n`;
-  md += `**Exit Code:** ${data.exit_code}\n\n`;
-  md += `## 📝 Summary\n${data.summary}\n\n`;
 
-  if (data.hypotheses && data.hypotheses.length > 0) {
-    md += `## 🧠 Hypotheses\n\n`;
-    data.hypotheses.forEach((h, i) => {
-      md += `### ${i + 1}. ${h.title} (Confidence: ${h.confidence}%)\n`;
-      if (h.evidence.length > 0) {
-        md += `**Evidence:**\n${h.evidence.map(e => `- ${e}`).join('\n')}\n\n`;
-      }
-      if (h.next_steps.length > 0) {
-        md += `**Next Steps:**\n${h.next_steps.map(s => `- ${s}`).join('\n')}\n\n`;
-      }
-    });
-  }
-
-  if (data.code_locations && data.code_locations.length > 0) {
-    md += `## 📍 Suspect Code Locations\n\n`;
-    data.code_locations.forEach((c) => {
-      md += `- **File:** \`${c.path}\` ${c.line_hint ? `(Line ${c.line_hint})` : ''}\n`;
-      if (c.rationale) md += `  *Rationale:* ${c.rationale}\n`;
-    });
-    md += '\n';
-  }
-
-  return md;
-};
-
-const downloadIncidentReport = (incident: IncidentDetail) => {
-  const md = buildIncidentMarkdown(incident);
-  const blob = new Blob([md], { type: 'text/markdown' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `incident-${incident.incident_id}.md`;
-  a.click();
-  URL.revokeObjectURL(url);
-};
 
 const Dashboard = ({ session, onLogout }: DashboardProps) => {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -230,16 +201,16 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
   const activeProjectData = activeProject ? projects.find(x => x.id === activeProject) ?? null : null;
 
   const loadIncidents = useCallback(async (cloneCode: string) => {
-    const [workspace, project] = cloneCode.split('/');
-    console.log(cloneCode)
+    // cloneCode is now verbatim: "Mohit's Workspace/TESTK"
+    const slashIdx = cloneCode.indexOf('/');
+    const workspace = cloneCode.substring(0, slashIdx);
+    const project = cloneCode.substring(slashIdx + 1);
 
     setIncidentLoading(true);
     setIncidentError(null);
 
     try {
-      console.log(workspace, project)
-      const ans = workspace.split('-')
-      const res = await fetch(`${BACKEND}/api/repo/${ans[0]}/${project}/incidents`);
+      const res = await fetch(`${BACKEND}/api/repo/${encodeURIComponent(workspace)}/${encodeURIComponent(project)}/incidents`);
 
       if (!res.ok) {
         setIncidentError(`Failed to load incidents (${res.status})`);
@@ -356,9 +327,8 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
     setTreeLoading(true);
     setTreeData(null);
     setNoPush(false);
-    const [workspace, project] = cloneCode.split('/');
     try {
-      const res = await fetch(`${BACKEND}/api/repo/${workspace}/${project}/tree`);
+      const res = await fetch(`${repoApi(cloneCode)}/tree`);
       console.log(res)
       const json = await res.json();
       if (json.status === 'no_push' || !json.tree) {
@@ -380,12 +350,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
 
       if (!p || !p.cloneCode) return;
 
-      const [workspace, project] = p.cloneCode.split('/');
-      console.log("w ", workspace)
-      const ans = workspace.split('-')
-      console.log("ansss ", ans[0])
-      const res = await fetch(`${BACKEND}/api/repo/${ans[0].split('-')[0]}/${project}/incidents`);
-      console.log("resss ", res)
+      const res = await fetch(`${repoApi(p.cloneCode)}/blob/${encodeURIComponent(node.path)}`);
       if (res.ok) {
         const text = await res.text();
         setViewingFile({ node, content: text, loading: false });
@@ -400,7 +365,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
   // Fetch projects initially
   const loadProjects = useCallback(async () => {
     try {
-      const res = await fetch(`${BACKEND}/api/workspaces/${session.workspace}/projects`, {
+      const res = await fetch(`${BACKEND}/api/workspaces/${encodeURIComponent(session.workspace)}/projects`, {
         headers: { 'Authorization': `Bearer ${session.token}` }
       });
       if (res.status === 401 || res.status === 403) {
@@ -411,14 +376,24 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
         const data = await res.json();
         setProjects(data);
 
-        // Auto-select if nothing active or stored
-        if (!activeProject && data.length > 0) {
-          const stored = localStorage.getItem(`activeProject_${session.workspace}`);
-          if (stored && data.find((p: Project) => p.id === stored)) {
-            setActiveProject(stored);
+        // Self-heal stale activeProject and strictly default to valid project ID
+        let currentActive = activeProject || localStorage.getItem('nexus_active_project');
+        if (currentActive && !data.find((p: Project) => p.id === currentActive)) {
+          currentActive = null;
+        }
+
+        if (!currentActive && data.length > 0) {
+          const workspaceStored = localStorage.getItem(`activeProject_${session.workspace}`);
+          if (workspaceStored && data.find((p: Project) => p.id === workspaceStored)) {
+            setActiveProject(workspaceStored);
+            localStorage.setItem('nexus_active_project', workspaceStored);
           } else {
             setActiveProject(data[0].id);
+            localStorage.setItem('nexus_active_project', data[0].id);
           }
+        } else if (!currentActive && data.length === 0) {
+          setActiveProject(null);
+          localStorage.removeItem('nexus_active_project');
         }
       }
     } catch (e) {
@@ -431,9 +406,8 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
   }, [loadProjects]);
 
   const fetchGraph = useCallback(async (cloneCode: string) => {
-    const [workspace, project] = cloneCode.split('/');
     try {
-      const graphRes = await fetch(`${BACKEND}/api/repo/${workspace}/${project}/graph`);
+      const graphRes = await fetch(`${repoApi(cloneCode)}/graph`);
       if (graphRes.ok) {
         const gData = await graphRes.json();
         if (gData.status === 'ok') {
@@ -460,7 +434,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
   const handleCreateProject = async () => {
     if (!newProj.name.trim()) return;
     try {
-      const res = await fetch(`${BACKEND}/api/workspaces/${session.workspace}/projects`, {
+      const res = await fetch(`${BACKEND}/api/workspaces/${encodeURIComponent(session.workspace)}/projects`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -482,7 +456,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
   const handleAddMember = async (projectId: string) => {
     if (!newMem.name.trim() || !newMem.email.trim()) return;
     try {
-      const res = await fetch(`${BACKEND}/api/workspaces/${session.workspace}/projects/${projectId}/members`, {
+      const res = await fetch(`${BACKEND}/api/workspaces/${encodeURIComponent(session.workspace)}/projects/${projectId}/members`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -504,7 +478,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
 
   const removeMember = async (projectId: string, memberEmail: string) => {
     try {
-      const res = await fetch(`${BACKEND}/api/workspaces/${session.workspace}/projects/${projectId}/members/${memberEmail}`, {
+      const res = await fetch(`${BACKEND}/api/workspaces/${encodeURIComponent(session.workspace)}/projects/${projectId}/members/${memberEmail}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${session.token}` }
       });
@@ -529,10 +503,10 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
     try {
       const p = projects.find(x => x.id === activeProject);
       if (!p) return;
-      const [workspace, project] = p.cloneCode.split('/');
+      const [workspace, project] = parseCloneCode(p.cloneCode);
 
       // 1. Start async analysis — returns instantly with job_id
-      const res = await fetch(`${BACKEND}/api/repo/${workspace}/${project}/analyze`, {
+      const res = await fetch(`${repoApi(p.cloneCode)}/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ local_path: null, force: true })
@@ -551,7 +525,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
       // 2. Poll for progress every 1.5s
       const poll = async () => {
         try {
-          const statusRes = await fetch(`${BACKEND}/api/repo/${workspace}/${project}/analyze/status/${job_id}`);
+          const statusRes = await fetch(`${repoApi(p.cloneCode)}/analyze/status/${job_id}`);
           if (!statusRes.ok) return;
           const status = await statusRes.json();
 
@@ -595,8 +569,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
     try {
       const p = projects.find(x => x.id === activeProject);
       if (!p) return;
-      const [workspace, project] = p.cloneCode.split('/');
-      const res = await fetch(`${BACKEND}/api/repo/${workspace}/${project}/query`, {
+      const res = await fetch(`${repoApi(p.cloneCode)}/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question: queryText })
@@ -649,8 +622,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
     try {
       const p = projects.find(x => x.id === activeProject);
       if (!p) return;
-      const [workspace, project] = p.cloneCode.split('/');
-      const res = await fetch(`${BACKEND}/api/repo/${workspace}/${project}/blast-radius`, {
+      const res = await fetch(`${repoApi(p.cloneCode)}/blast-radius`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ changed_files: files })
@@ -685,8 +657,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
     try {
       const p = projects.find(x => x.id === activeProject);
       if (!p) return;
-      const [workspace, project] = p.cloneCode.split('/');
-      const res = await fetch(`${BACKEND}/api/repo/${workspace}/${project}/query`, {
+      const res = await fetch(`${repoApi(p.cloneCode)}/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question: text })
@@ -998,7 +969,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                 {fgViewMode === 'terminal' && (() => {
                   const p = projects.find(x => x.id === activeProject);
                   if (!p) return null;
-                  const [ws, proj] = p.cloneCode.split('/');
+                  const [ws, proj] = parseCloneCode(p.cloneCode);
                   return (
                     <>
                       <div className="nx-chat-header">
@@ -1114,7 +1085,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
               <div className="form-group mt-4">
                 <label>PROJECT_NAME</label>
                 <input type="text" className="dash-input" placeholder="e.g. Core API Service"
-                  value={newProj.name} onChange={e => setNewProj({ ...newProj, name: e.target.value })} />
+                  value={newProj.name} onChange={e => setNewProj({ ...newProj, name: e.target.value.replace(/\//g, '') })} />
               </div>
               <div className="form-group mt-3">
                 <label>DESCRIPTION_TAG</label>
@@ -1442,7 +1413,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                                   onClick={async () => {
                                     if (!activeProjectData || incidents.length === 0) return;
                                     const latest = incidents[0];
-                                    const res = await fetch(`${BACKEND}/api/repo/${latest.workspace}/${latest.project}/incidents/${latest.incident_id}`);
+                                    const res = await fetch(`${BACKEND}/api/repo/${encodeURIComponent(latest.workspace)}/${encodeURIComponent(latest.project)}/incidents/${latest.incident_id}`);
                                     if (res.ok) {
                                       const data = await res.json();
                                       setViewingIncident({
@@ -1476,7 +1447,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                                   <button className="btn-dash-primary" onClick={async () => {
                                     try {
                                       if (!activeProjectData) return;
-                                      const res = await fetch(`${BACKEND}/api/repo/${inc.workspace}/${inc.project}/incidents/${inc.incident_id}`);
+                                      const res = await fetch(`${BACKEND}/api/repo/${encodeURIComponent(inc.workspace)}/${encodeURIComponent(inc.project)}/incidents/${inc.incident_id}`);
                                       if (res.ok) {
                                         const data = await res.json();
                                         setViewingIncident({
@@ -1625,7 +1596,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                               <h3 style={{ margin: 0, fontSize: '18px' }}>📡 Live Server Telemetry</h3>
                             </div>
                             <div style={{ height: '400px', width: '100%', border: '1px solid #30363d', borderRadius: '8px', overflow: 'hidden', background: '#010409' }}>
-                              <LiveTerminal workspace={p.cloneCode.split('/')[0]} project={p.cloneCode.split('/')[1]} />
+                              <LiveTerminal workspace={parseCloneCode(p.cloneCode)[0]} project={parseCloneCode(p.cloneCode)[1]} />
                             </div>
                           </div>
                         </div>

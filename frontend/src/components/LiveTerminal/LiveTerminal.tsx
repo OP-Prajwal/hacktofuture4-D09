@@ -125,7 +125,7 @@ export default function LiveTerminal({ workspace, project, onFileClick }: LiveTe
     setStatus('idle');
     setDiagnosis(null);
 
-    const wsUrl = `${BACKEND_WS}/ws/viewer/${workspace}/${project}`;
+    const wsUrl = `${BACKEND_WS}/ws/viewer/${encodeURIComponent(workspace)}/${encodeURIComponent(project)}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 

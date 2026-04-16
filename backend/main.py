@@ -71,32 +71,32 @@ class CreateProjectRequest(BaseModel):
     name: str
     description: str
 
-@app.post("/api/workspaces/{workspace_slug}/projects")
-def add_project(workspace_slug: str, body: CreateProjectRequest, current_user: dict = Depends(get_current_user)):
-    if current_user.get("workspace") != workspace_slug:
+@app.post("/api/workspaces/{workspace}/projects")
+def add_project(workspace: str, body: CreateProjectRequest, current_user: dict = Depends(get_current_user)):
+    if current_user.get("workspace") != workspace:
         raise HTTPException(status_code=403, detail="Not authorized for this workspace")
-    project = create_project(workspace_slug, body.name, body.description)
+    project = create_project(workspace, body.name, body.description)
     return project
 
-@app.get("/api/workspaces/{workspace_slug}/projects")
-def get_projects(workspace_slug: str, current_user: dict = Depends(get_current_user)):
-    if current_user.get("workspace") != workspace_slug:
+@app.get("/api/workspaces/{workspace}/projects")
+def get_projects(workspace: str, current_user: dict = Depends(get_current_user)):
+    if current_user.get("workspace") != workspace:
         raise HTTPException(status_code=403, detail="Not authorized for this workspace")
-    return get_workspace_projects(workspace_slug)
+    return get_workspace_projects(workspace)
 
 class AddMemberRequest(BaseModel):
     name: str
     email: str
     role: str
 
-@app.post("/api/workspaces/{workspace_slug}/projects/{project_id}/members")
-def add_member(workspace_slug: str, project_id: str, body: AddMemberRequest, current_user: dict = Depends(get_current_user)):
-    add_project_member(workspace_slug, project_id, body.name, body.email, body.role)
+@app.post("/api/workspaces/{workspace}/projects/{project_id}/members")
+def add_member(workspace: str, project_id: str, body: AddMemberRequest, current_user: dict = Depends(get_current_user)):
+    add_project_member(workspace, project_id, body.name, body.email, body.role)
     return {"status": "ok"}
 
-@app.delete("/api/workspaces/{workspace_slug}/projects/{project_id}/members/{email}")
-def remove_member(workspace_slug: str, project_id: str, email: str, current_user: dict = Depends(get_current_user)):
-    remove_project_member(workspace_slug, project_id, email)
+@app.delete("/api/workspaces/{workspace}/projects/{project_id}/members/{email}")
+def remove_member(workspace: str, project_id: str, email: str, current_user: dict = Depends(get_current_user)):
+    remove_project_member(workspace, project_id, email)
     return {"status": "ok"}
 
 
