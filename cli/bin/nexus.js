@@ -7,6 +7,7 @@ import path from 'path';
 import fs from 'fs';
 import ora from 'ora';
 import crypto from 'crypto';
+import { spawn, spawnSync } from 'child_process';
 
 const program = new Command();
 const NEXUS_DIR = '.nexus';
@@ -302,7 +303,6 @@ program
       process.exit(1);
     }
 
-    const { spawnSync } = require('child_process');
     const cmdStr = args.join(' ');
 
     console.log(chalk.cyan(`\n🚀 [NEXUS-X Pipeline] Executing Build Command: ${chalk.bold(cmdStr)}\n`));
@@ -393,15 +393,19 @@ program
       }
     }
 
-    function sendExit(code) {
+    async function sendExit(code) {
       if (ws && wsConnected && ws.readyState === 1) {
         ws.send(JSON.stringify({ type: 'exit', code }));
-        setTimeout(() => ws.close(), 500);
+        await new Promise(resolve => setTimeout(resolve, 250));
+        try {
+          ws.close();
+        } catch {
+          // Ignore shutdown errors on process exit.
+        }
       }
     }
 
     // ── Spawn the wrapped process ──
-    const { spawn } = require('child_process');
     const child = spawn(args[0], args.slice(1), {
       shell: true,
       cwd: process.cwd(),
@@ -437,7 +441,7 @@ program
           : chalk.red(`\n✗ Process exited with code ${code}`)
       );
 
-      sendExit(code);
+      await sendExit(code);
 
       // HTTP fallback: if WebSocket wasn't connected, POST the logs
       if (!wsConnected && logBuffer.length > 0) {

@@ -71,6 +71,33 @@ interface Project {
   members: Member[];
 }
 
+interface IncidentSummary {
+  workspace: string;
+  project: string;
+  incident_id: string;
+  status: string;
+  summary: string;
+  exit_code: number;
+  hypotheses?: Array<{
+    title: string;
+    confidence: number;
+    evidence: string[];
+    likely_locations: string[];
+    next_steps: string[];
+  }>;
+  code_locations?: Array<{
+    path: string;
+    line_hint?: number | null;
+    confidence?: number;
+    rationale?: string;
+  }>;
+  created_at: string;
+}
+
+interface IncidentDetail extends IncidentSummary {
+  report_markdown?: string;
+}
+
 interface DashboardProps {
   session: UserSession;
   onLogout: () => void;
@@ -113,8 +140,10 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
   const [treeData, setTreeData] = useState<TreeData | null>(null);
   const [treeLoading, setTreeLoading] = useState(false);
   const [noPush, setNoPush] = useState(false);
-  const [incidents, setIncidents] = useState<any[]>([]);
-  const [viewingIncident, setViewingIncident] = useState<any>(null);
+  const [incidents, setIncidents] = useState<IncidentSummary[]>([]);
+  const [viewingIncident, setViewingIncident] = useState<IncidentDetail | null>(null);
+  const [incidentLoading, setIncidentLoading] = useState(false);
+  const [incidentError, setIncidentError] = useState<string | null>(null);
 
   // File Viewer state
   const [viewingFile, setViewingFile] = useState<{ node: FileNode, content: string | null, loading: boolean } | null>(null);
@@ -152,6 +181,119 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
 
   const isEnterprise = session.type === 'enterprise';
   const orgName = isEnterprise ? session.company : `${session.name}'s Workspace`;
+  const activeProjectData = activeProject ? projects.find(x => x.id === activeProject) ?? null : null;
+
+  const loadIncidents = useCallback(async (cloneCode: string) => {
+    const [workspace, project] = cloneCode.split('/');
+    console.log(cloneCode)
+
+    setIncidentLoading(true);
+    setIncidentError(null);
+
+    try {
+      console.log(workspace, project)
+      const ans = workspace.split('-')
+      const res = await fetch(`${BACKEND}/api/repo/${ans[0]}/${project}/incidents`);
+
+      if (!res.ok) {
+        setIncidentError(`Failed to load incidents (${res.status})`);
+        setIncidents([]);
+        return;
+      }
+
+      const text = await res.text();
+      console.log("RAW INCIDENT RESPONSE:", text);
+
+      let data: any;
+      try {
+        data = text ? JSON.parse(text) : [];
+      } catch (e) {
+        console.error("JSON parse failed:", e);
+        setIncidents([]);
+        return;
+      }
+
+      console.log("PARSED INCIDENT DATA:", data);
+
+      // 🔥 UNIVERSAL HANDLER
+      const finalData =
+        Array.isArray(data)
+          ? data
+          : Array.isArray(data.incidents)
+            ? data.incidents
+            : [];
+
+      console.log("FINAL INCIDENTS:", finalData);
+
+      setIncidents(finalData);
+
+    } catch (e) {
+      console.error("Failed to fetch incidents", e);
+      setIncidentError('Could not load incidents');
+      setIncidents([]);
+    } finally {
+      setIncidentLoading(false);
+    }
+  }, []);
+
+  const buildIncidentMarkdown = useCallback((incident: IncidentDetail) => {
+    if (incident.report_markdown?.trim()) return incident.report_markdown;
+
+    const lines = [
+      `# Incident Report: ${incident.incident_id}`,
+      "",
+      `- Workspace: ${incident.workspace}`,
+      `- Project: ${incident.project}`,
+      `- Status: ${incident.status}`,
+      `- Exit Code: ${incident.exit_code}`,
+      `- Created At: ${incident.created_at}`,
+      "",
+      "## Summary",
+      incident.summary || "No summary provided.",
+      "",
+    ];
+
+    if (incident.hypotheses?.length) {
+      lines.push("## Hypotheses", "");
+      incident.hypotheses.forEach((hypothesis, index) => {
+        lines.push(`### ${index + 1}. ${hypothesis.title}`);
+        lines.push(`- Confidence: ${Math.round(hypothesis.confidence * 100)}%`);
+        if (hypothesis.evidence?.length) {
+          lines.push("- Evidence:");
+          hypothesis.evidence.forEach((item) => lines.push(`  - ${item}`));
+        }
+        if (hypothesis.next_steps?.length) {
+          lines.push("- Next Steps:");
+          hypothesis.next_steps.forEach((item) => lines.push(`  - ${item}`));
+        }
+        lines.push("");
+      });
+    }
+
+    if (incident.code_locations?.length) {
+      lines.push("## Code Locations", "");
+      incident.code_locations.forEach((location) => {
+        const lineHint = location.line_hint ? `:${location.line_hint}` : "";
+        lines.push(`- ${location.path}${lineHint}`);
+      });
+      lines.push("");
+    }
+
+    return lines.join("\n");
+  }, []);
+
+  const downloadIncidentReport = useCallback((incident: IncidentDetail) => {
+    const markdown = buildIncidentMarkdown(incident);
+    const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${incident.incident_id}.md`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, [buildIncidentMarkdown]);
 
   // Persist active project and reset view states
   useEffect(() => {
@@ -171,6 +313,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
     const [workspace, project] = cloneCode.split('/');
     try {
       const res = await fetch(`${BACKEND}/api/repo/${workspace}/${project}/tree`);
+      console.log(res)
       const json = await res.json();
       if (json.status === 'no_push' || !json.tree) {
         setNoPush(true);
@@ -188,9 +331,15 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
     setViewingFile({ node, content: null, loading: true });
     try {
       const p = projects.find(x => x.id === activeProject);
-      if (!p) return;
+
+      if (!p || !p.cloneCode) return;
+
       const [workspace, project] = p.cloneCode.split('/');
-      const res = await fetch(`${BACKEND}/api/repo/${workspace}/${project}/blob/${node.hash}/content`);
+      console.log("w ", workspace)
+      const ans = workspace.split('-')
+      console.log("ansss ", ans[0])
+      const res = await fetch(`${BACKEND}/api/repo/${ans[0].split('-')[0]}/${project}/incidents`);
+      console.log("resss ", res)
       if (res.ok) {
         const text = await res.text();
         setViewingFile({ node, content: text, loading: false });
@@ -215,7 +364,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
       if (res.ok) {
         const data = await res.json();
         setProjects(data);
-        
+
         // Auto-select if nothing active or stored
         if (!activeProject && data.length > 0) {
           const stored = localStorage.getItem(`activeProject_${session.workspace}`);
@@ -267,9 +416,9 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
     try {
       const res = await fetch(`${BACKEND}/api/workspaces/${session.workspace}/projects`, {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.token}` 
+          'Authorization': `Bearer ${session.token}`
         },
         body: JSON.stringify({ name: newProj.name, description: newProj.description })
       });
@@ -289,9 +438,9 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
     try {
       const res = await fetch(`${BACKEND}/api/workspaces/${session.workspace}/projects/${projectId}/members`, {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.token}` 
+          'Authorization': `Bearer ${session.token}`
         },
         body: JSON.stringify(newMem)
       });
@@ -420,34 +569,31 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
   };
 
   useEffect(() => {
-    let incidentInterval: number;
-    
-    if (activeProject && session) {
+    let interval: number;
+
+    if (activeProject && projects.length > 0) {
       const p = projects.find(x => x.id === activeProject);
-      if (p) {
-        const [ws, pn] = p.cloneCode.split('/');
-        
-        const fetchIncidents = async () => {
-          try {
-            const res = await fetch(`${BACKEND}/api/repo/${ws}/${pn}/incidents`);
-            if (res.ok) {
-              const data = await res.json();
-              setIncidents(data.incidents || []);
-            }
-          } catch (e) {
-            console.error("Failed to fetch incidents", e);
-          }
-        };
-        
-        fetchIncidents();
-        incidentInterval = window.setInterval(fetchIncidents, 5000);
+
+      if (p && p.cloneCode) {
+        console.log("🔥 LOADING INCIDENTS FOR:", p.cloneCode);
+        console.log("p  ", p)
+        // 🔥 FORCE FIRST LOAD
+        loadIncidents(p.cloneCode);
+
+        // 🔥 AUTO POLL
+        interval = window.setInterval(() => {
+          loadIncidents(p.cloneCode);
+        }, 5000);
       }
+    } else {
+      setIncidents([]);
+      setIncidentError(null);
     }
-    
+
     return () => {
-      if (incidentInterval) window.clearInterval(incidentInterval);
+      if (interval) window.clearInterval(interval);
     };
-  }, [activeProject, session, projects]);
+  }, [activeProject, projects, loadIncidents]);
 
   const handleBlastRadius = async () => {
     const files = blastFiles.split(',').map(f => f.trim()).filter(Boolean);
@@ -604,6 +750,17 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
 
   return (
     <div className="dash-root">
+      {/* DEBUG OVERLAY */}
+      <div style={{
+        position: 'fixed', bottom: '10px', right: '10px', zIndex: 9999,
+        background: 'rgba(0,0,0,0.8)', color: '#0f0', padding: '10px',
+        border: '1px solid #0f0', borderRadius: '4px', fontSize: '10px',
+        fontFamily: 'monospace', pointerEvents: 'none'
+      }}>
+        ACTIVE_PROJ: {activeProject}<br />
+        INCIDENTS: {incidents.length}<br />
+        LAST_POLL: {new Date().toLocaleTimeString()}
+      </div>
       {/* Fullscreen Graph Overlay */}
       {fullScreenGraph && graphData && activeProject && (() => {
         const topFunctions = graphData.nodes
@@ -620,199 +777,199 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
         ] : ['How many functions are there? ↗', 'Explain the architecture ↗', 'Find dead code ↗'];
 
         return (
-        <div className="fullscreen-graph-overlay">
-          <div className="nx-panel">
-            {/* ═══ LEFT SIDEBAR ═══ */}
-            <aside className="nx-sidebar">
-              <div className="nx-brand" onClick={() => setFullScreenGraph(false)} style={{cursor: 'pointer'}}>
-                NEXUS<span>-X</span>
-              </div>
-
-              {/* Stats */}
-              <div className="nx-stats-row">
-                <div className="nx-stat-box">
-                  <div className="nx-stat-num">{graphData.nodes.length}</div>
-                  <div className="nx-stat-label">Nodes</div>
+          <div className="fullscreen-graph-overlay">
+            <div className="nx-panel">
+              {/* ═══ LEFT SIDEBAR ═══ */}
+              <aside className="nx-sidebar">
+                <div className="nx-brand" onClick={() => setFullScreenGraph(false)} style={{ cursor: 'pointer' }}>
+                  NEXUS<span>-X</span>
                 </div>
-                <div className="nx-stat-box">
-                  <div className="nx-stat-num">{graphData.edges.length}</div>
-                  <div className="nx-stat-label">Edges</div>
+
+                {/* Stats */}
+                <div className="nx-stats-row">
+                  <div className="nx-stat-box">
+                    <div className="nx-stat-num">{graphData.nodes.length}</div>
+                    <div className="nx-stat-label">Nodes</div>
+                  </div>
+                  <div className="nx-stat-box">
+                    <div className="nx-stat-num">{graphData.edges.length}</div>
+                    <div className="nx-stat-label">Edges</div>
+                  </div>
                 </div>
-              </div>
 
-              {/* Top Functions */}
-              <div className="nx-fn-title">TOP FUNCTIONS</div>
-              <div className="nx-fn-list">
-                {topFunctions.length === 0 ? (
-                  <div className="nx-fn-empty">No functions discovered yet.</div>
-                ) : (
-                  topFunctions.map((fn: GraphNode) => (
-                    <div key={fn.id} className="nx-fn-item">
-                      <div className="nx-fn-info">
-                        <span className="nx-fn-name">{fn.data.label}</span>
-                        <span className="nx-fn-file">{fn.data.file?.split('/').pop()}</span>
+                {/* Top Functions */}
+                <div className="nx-fn-title">TOP FUNCTIONS</div>
+                <div className="nx-fn-list">
+                  {topFunctions.length === 0 ? (
+                    <div className="nx-fn-empty">No functions discovered yet.</div>
+                  ) : (
+                    topFunctions.map((fn: GraphNode) => (
+                      <div key={fn.id} className="nx-fn-item">
+                        <div className="nx-fn-info">
+                          <span className="nx-fn-name">{fn.data.label}</span>
+                          <span className="nx-fn-file">{fn.data.file?.split('/').pop()}</span>
+                        </div>
+                        <span className="nx-fn-badge">{fn.data.blast_radius}</span>
                       </div>
-                      <span className="nx-fn-badge">{fn.data.blast_radius}</span>
-                    </div>
-                  ))
-                )}
-              </div>
+                    ))
+                  )}
+                </div>
 
-              {/* View Mode Tabs */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <button className={`nx-graph-toggle ${fgViewMode === 'graph' ? 'active' : ''}`} onClick={() => setFgViewMode('graph')} style={fgViewMode === 'graph' ? { borderColor: 'var(--accent2)', color: 'var(--accent2)', background: 'rgba(var(--accent2-rgb), 0.05)' } : {}}>
+                {/* View Mode Tabs */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <button className={`nx-graph-toggle ${fgViewMode === 'graph' ? 'active' : ''}`} onClick={() => setFgViewMode('graph')} style={fgViewMode === 'graph' ? { borderColor: 'var(--accent2)', color: 'var(--accent2)', background: 'rgba(var(--accent2-rgb), 0.05)' } : {}}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
+                      <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                    </svg>
+                    Graph
+                  </button>
+                  <button className={`nx-graph-toggle ${fgViewMode === 'chat' ? 'active' : ''}`} onClick={() => setFgViewMode('chat')} style={fgViewMode === 'chat' ? { borderColor: 'var(--accent2)', color: 'var(--accent2)', background: 'rgba(var(--accent2-rgb), 0.05)' } : {}}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+                    </svg>
+                    AI Agent
+                  </button>
+                  <button className={`nx-graph-toggle ${fgViewMode === 'terminal' ? 'active' : ''}`} onClick={() => setFgViewMode('terminal')} style={fgViewMode === 'terminal' ? { borderColor: '#3fb950', color: '#3fb950', background: 'rgba(63,185,80,0.05)' } : {}}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
+                    </svg>
+                    Terminal
+                  </button>
+                </div>
+
+                {/* Exit Dashboard Button */}
+                <button className="nx-exit-btn" onClick={() => setFullScreenGraph(false)}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
-                    <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+                    <line x1="19" y1="12" x2="5" y2="12"></line>
+                    <polyline points="12 19 5 12 12 5"></polyline>
                   </svg>
-                  Graph
+                  Exit to Dashboard
                 </button>
-                <button className={`nx-graph-toggle ${fgViewMode === 'chat' ? 'active' : ''}`} onClick={() => setFgViewMode('chat')} style={fgViewMode === 'chat' ? { borderColor: 'var(--accent2)', color: 'var(--accent2)', background: 'rgba(var(--accent2-rgb), 0.05)' } : {}}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
-                  </svg>
-                  AI Agent
-                </button>
-                <button className={`nx-graph-toggle ${fgViewMode === 'terminal' ? 'active' : ''}`} onClick={() => setFgViewMode('terminal')} style={fgViewMode === 'terminal' ? { borderColor: '#3fb950', color: '#3fb950', background: 'rgba(63,185,80,0.05)' } : {}}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
-                  </svg>
-                  Terminal
-                </button>
-              </div>
+              </aside>
 
-              {/* Exit Dashboard Button */}
-              <button className="nx-exit-btn" onClick={() => setFullScreenGraph(false)}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="19" y1="12" x2="5" y2="12"></line>
-                  <polyline points="12 19 5 12 12 5"></polyline>
-                </svg>
-                Exit to Dashboard
-              </button>
-            </aside>
-
-            {/* ═══ MAIN AREA ═══ */}
-            <div className="nx-main">
-              {fgViewMode === 'graph' && (
-                <>
-                  <div className="nx-chat-header">
-                    <div>
-                      <h2>Knowledge Graph</h2>
-                      <p>Visual dependency map of your codebase</p>
-                    </div>
-                  </div>
-                  <div className="nx-graph-area">
-                    <CIGraph graphData={graphData} />
-                  </div>
-                </>
-              )}
-
-              {fgViewMode === 'chat' && (
-                <>
-                  {/* Chat Header */}
-                  <div className="nx-chat-header">
-                    <div>
-                      <h2>Agent</h2>
-                      <p>Ask anything about your repo</p>
-                    </div>
-                  </div>
-
-                  {/* Chat Body */}
-                  <div className="nx-chat-body">
-                    {chatMessages.length === 0 && (
-                      <div className="nx-ai-card">
-                        <div className="nx-ai-label">NEXUS</div>
-                        <div className="nx-ai-text" dangerouslySetInnerHTML={{ __html: formatAIResponse(welcomeMsg) }} />
-                        <div className="nx-suggestion-row">
-                          {smartSuggestions.map(s => (
-                            <button key={s} className="nx-suggestion-chip" onClick={() => {
-                              setChatInput(s.replace(' ↗', ''));
-                              chatInputRef.current?.focus();
-                            }}>
-                              {s}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {chatMessages.map(msg => (
-                      msg.role === 'user' ? (
-                        <div key={msg.id} className="nx-user-bubble">
-                          {msg.content}
-                        </div>
-                      ) : (
-                        <div key={msg.id} className="nx-ai-card">
-                          <div className="nx-ai-label">NEXUS</div>
-                          <div className="nx-ai-text" dangerouslySetInnerHTML={{ __html: formatAIResponse(msg.content) }} />
-                          {msg.contextNodes && msg.contextNodes.length > 0 && (
-                            <div className="nx-ai-context">
-                              {msg.contextNodes.slice(0, 6).map((n, i) => (
-                                <span key={i} className="nx-code-pill">{n.name}</span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )
-                    ))}
-
-                    {chatSending && (
-                      <div className="nx-ai-card">
-                        <div className="nx-ai-label">NEXUS</div>
-                        <div className="chat-typing-indicator">
-                          <span></span><span></span><span></span>
-                        </div>
-                      </div>
-                    )}
-                    <div ref={chatEndRef} />
-                  </div>
-
-                  {/* Input Bar */}
-                  <div className="nx-chat-input-bar">
-                    <input
-                      ref={chatInputRef}
-                      type="text"
-                      className="nx-chat-input"
-                      placeholder="Ask about your codebase..."
-                      value={chatInput}
-                      onChange={e => setChatInput(e.target.value)}
-                      onKeyDown={e => e.key === 'Enter' && handleChatSend()}
-                      disabled={chatSending}
-                    />
-                    <button
-                      className="nx-send-btn"
-                      onClick={handleChatSend}
-                      disabled={chatSending || !chatInput.trim()}
-                    >
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
-                      </svg>
-                    </button>
-                  </div>
-                </>
-              )}
-
-              {fgViewMode === 'terminal' && (() => {
-                const p = projects.find(x => x.id === activeProject);
-                if (!p) return null;
-                const [ws, proj] = p.cloneCode.split('/');
-                return (
+              {/* ═══ MAIN AREA ═══ */}
+              <div className="nx-main">
+                {fgViewMode === 'graph' && (
                   <>
                     <div className="nx-chat-header">
                       <div>
-                        <h2>CI/CD Terminal</h2>
-                        <p>Live logs from your production runner</p>
+                        <h2>Knowledge Graph</h2>
+                        <p>Visual dependency map of your codebase</p>
                       </div>
                     </div>
-                    <div style={{ flex: 1, overflow: 'hidden' }}>
-                      <LiveTerminal workspace={ws} project={proj} />
+                    <div className="nx-graph-area">
+                      <CIGraph graphData={graphData} />
                     </div>
                   </>
-                );
-              })()}
+                )}
+
+                {fgViewMode === 'chat' && (
+                  <>
+                    {/* Chat Header */}
+                    <div className="nx-chat-header">
+                      <div>
+                        <h2>Agent</h2>
+                        <p>Ask anything about your repo</p>
+                      </div>
+                    </div>
+
+                    {/* Chat Body */}
+                    <div className="nx-chat-body">
+                      {chatMessages.length === 0 && (
+                        <div className="nx-ai-card">
+                          <div className="nx-ai-label">NEXUS</div>
+                          <div className="nx-ai-text" dangerouslySetInnerHTML={{ __html: formatAIResponse(welcomeMsg) }} />
+                          <div className="nx-suggestion-row">
+                            {smartSuggestions.map(s => (
+                              <button key={s} className="nx-suggestion-chip" onClick={() => {
+                                setChatInput(s.replace(' ↗', ''));
+                                chatInputRef.current?.focus();
+                              }}>
+                                {s}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {chatMessages.map(msg => (
+                        msg.role === 'user' ? (
+                          <div key={msg.id} className="nx-user-bubble">
+                            {msg.content}
+                          </div>
+                        ) : (
+                          <div key={msg.id} className="nx-ai-card">
+                            <div className="nx-ai-label">NEXUS</div>
+                            <div className="nx-ai-text" dangerouslySetInnerHTML={{ __html: formatAIResponse(msg.content) }} />
+                            {msg.contextNodes && msg.contextNodes.length > 0 && (
+                              <div className="nx-ai-context">
+                                {msg.contextNodes.slice(0, 6).map((n, i) => (
+                                  <span key={i} className="nx-code-pill">{n.name}</span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      ))}
+
+                      {chatSending && (
+                        <div className="nx-ai-card">
+                          <div className="nx-ai-label">NEXUS</div>
+                          <div className="chat-typing-indicator">
+                            <span></span><span></span><span></span>
+                          </div>
+                        </div>
+                      )}
+                      <div ref={chatEndRef} />
+                    </div>
+
+                    {/* Input Bar */}
+                    <div className="nx-chat-input-bar">
+                      <input
+                        ref={chatInputRef}
+                        type="text"
+                        className="nx-chat-input"
+                        placeholder="Ask about your codebase..."
+                        value={chatInput}
+                        onChange={e => setChatInput(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && handleChatSend()}
+                        disabled={chatSending}
+                      />
+                      <button
+                        className="nx-send-btn"
+                        onClick={handleChatSend}
+                        disabled={chatSending || !chatInput.trim()}
+                      >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
+                        </svg>
+                      </button>
+                    </div>
+                  </>
+                )}
+
+                {fgViewMode === 'terminal' && (() => {
+                  const p = projects.find(x => x.id === activeProject);
+                  if (!p) return null;
+                  const [ws, proj] = p.cloneCode.split('/');
+                  return (
+                    <>
+                      <div className="nx-chat-header">
+                        <div>
+                          <h2>CI/CD Terminal</h2>
+                          <p>Live logs from your production runner</p>
+                        </div>
+                      </div>
+                      <div style={{ flex: 1, overflow: 'hidden' }}>
+                        <LiveTerminal workspace={ws} project={proj} />
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
             </div>
           </div>
-        </div>
         );
       })()}
 
@@ -849,7 +1006,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                   className={`proj-link ${activeProject === p.id ? 'active' : ''}`}
                   onClick={() => setActiveProject(p.id)}
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></svg>
                   {p.name}
                 </button>
               ))
@@ -906,12 +1063,12 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
               <div className="form-group mt-4">
                 <label>PROJECT_NAME</label>
                 <input type="text" className="dash-input" placeholder="e.g. Core API Service"
-                  value={newProj.name} onChange={e => setNewProj({...newProj, name: e.target.value})} />
+                  value={newProj.name} onChange={e => setNewProj({ ...newProj, name: e.target.value })} />
               </div>
               <div className="form-group mt-3">
                 <label>DESCRIPTION_TAG</label>
                 <input type="text" className="dash-input" placeholder="e.g. backend graph processing"
-                  value={newProj.description} onChange={e => setNewProj({...newProj, description: e.target.value})} />
+                  value={newProj.description} onChange={e => setNewProj({ ...newProj, description: e.target.value })} />
               </div>
               <div className="form-actions mt-4">
                 <button className="btn-dash-primary" onClick={handleCreateProject} disabled={!newProj.name}>deploy project</button>
@@ -943,7 +1100,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                     <div className="section-title">
                       <h3>🧠 Intelligence Layer</h3>
                     </div>
-                    
+
                     <div className="ic-card">
                       <div className="ic-header">
                         <div>
@@ -955,27 +1112,27 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                             {analyzing ? `Analyzing... ${analyzeProgress}%` : ((graphData?.nodes?.length || 0) > 0 ? 'Sync Updated Graph' : 'Create Graph')}
                           </button>
                           {(graphData?.nodes?.length || 0) > 0 && (
-                            <button 
-                              className="btn-dash-secondary" 
+                            <button
+                              className="btn-dash-secondary"
                               onClick={() => setFullScreenGraph(true)}
                               style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
                             >
                               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                                <circle cx="12" cy="12" r="3"/>
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                <circle cx="12" cy="12" r="3" />
                               </svg>
                               View Graph
                             </button>
                           )}
                         </div>
                         {analyzing && (
-                          <div style={{width: '100%', marginTop: '12px'}}>
-                            <div style={{display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#8b949e', marginBottom: '6px'}}>
+                          <div style={{ width: '100%', marginTop: '12px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#8b949e', marginBottom: '6px' }}>
                               <span>{analyzeStep}</span>
                               <span>{analyzeProgress}%</span>
                             </div>
-                            <div style={{height: '4px', background: '#21262d', borderRadius: '4px', overflow: 'hidden'}}>
-                              <div style={{height: '100%', background: 'linear-gradient(90deg, #388bfd, #58a6ff)', width: `${analyzeProgress}%`, borderRadius: '4px', transition: 'width 0.5s ease'}} />
+                            <div style={{ height: '4px', background: '#21262d', borderRadius: '4px', overflow: 'hidden' }}>
+                              <div style={{ height: '100%', background: 'linear-gradient(90deg, #388bfd, #58a6ff)', width: `${analyzeProgress}%`, borderRadius: '4px', transition: 'width 0.5s ease' }} />
                             </div>
                           </div>
                         )}
@@ -1018,9 +1175,9 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
 
                   {/* ── Blast Radius CI Acceleration ── */}
                   {(graphData?.nodes?.length || 0) > 0 && (
-                    <div className="blast-radius-card" style={{marginTop: '16px'}}>
+                    <div className="blast-radius-card" style={{ marginTop: '16px' }}>
                       <h4>⚡ Blast Radius — CI Acceleration</h4>
-                      <p style={{fontSize: '11px', color: '#8b949e', marginBottom: '12px'}}>
+                      <p style={{ fontSize: '11px', color: '#8b949e', marginBottom: '12px' }}>
                         Enter changed file names to calculate impact and skip unaffected tests.
                       </p>
                       <div className="blast-radius-input">
@@ -1031,7 +1188,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                           value={blastFiles}
                           onChange={e => setBlastFiles(e.target.value)}
                           onKeyDown={e => e.key === 'Enter' && handleBlastRadius()}
-                          style={{flex: 1}}
+                          style={{ flex: 1 }}
                         />
                         <button className="btn-dash-secondary" onClick={handleBlastRadius} disabled={blastLoading}>
                           {blastLoading ? 'Analyzing...' : 'Calculate'}
@@ -1064,7 +1221,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                       )}
 
                       {blastResult?.error && (
-                        <div style={{color: '#f85149', fontSize: '12px', padding: '8px'}}>
+                        <div style={{ color: '#f85149', fontSize: '12px', padding: '8px' }}>
                           {blastResult.error as string}
                         </div>
                       )}
@@ -1072,36 +1229,93 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                   )}
 
                   {/* ── AI Incident Reports (Auto-Healer) ── */}
-                  <div className="incident-reports-main" style={{marginTop: '30px'}}>
-                    <div className="section-title">
-                      <h3>🚨 Production Incidents (Auto-Healer)</h3>
-                      <span className="badge" style={{background: incidents.length > 0 ? '#f85149' : '#238636'}}>{incidents.length}</span>
+                  <div className="incident-reports-main" style={{ marginTop: '30px' }}>
+                    <div className="section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <h3>🚨 Production Incidents (Auto-Healer)</h3>
+                        <span className="badge" style={{ background: incidents.length > 0 ? '#f85149' : '#238636' }}>{incidents.length}</span>
+                      </div>
+                      <button
+                        className="btn-dash-secondary"
+                        style={{ padding: '4px 12px', fontSize: '12px' }}
+                        onClick={() => activeProjectData && loadIncidents(activeProjectData.cloneCode)}
+                        disabled={!activeProjectData || incidentLoading}
+                      >
+                        {incidentLoading ? 'Refreshing...' : 'Refresh Incidents'}
+                      </button>
                     </div>
+                    {incidentError && (
+                      <div style={{ color: '#f85149', fontSize: '12px', marginTop: '12px' }}>
+                        {incidentError}
+                      </div>
+                    )}
+                    {incidents.length > 0 && (
+                      <div
+                        className="ic-card"
+                        style={{
+                          marginTop: '16px',
+                          border: '1px solid rgba(248,81,73,0.35)',
+                          background: 'rgba(248,81,73,0.06)'
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', alignItems: 'center' }}>
+                          <div>
+                            <div style={{ color: '#f85149', fontWeight: 700, fontSize: '13px' }}>
+                              Latest incident: {incidents[0].incident_id}
+                            </div>
+                            <div style={{ color: '#e6edf3', fontSize: '12px', marginTop: '4px' }}>
+                              {incidents[0].summary}
+                            </div>
+                          </div>
+                          <button
+                            className="btn-dash-primary"
+                            onClick={async () => {
+                              if (!activeProjectData) return;
+                              const [ws, pn] = activeProjectData.cloneCode.split('/');
+                              const res = await fetch(`${BACKEND}/api/repo/${ws}/${pn}/incidents/${incidents[0].incident_id}`);
+                              if (res.ok) {
+                                const data = await res.json();
+                                setViewingIncident({
+                                  ...data,
+                                  report_markdown: buildIncidentMarkdown(data),
+                                });
+                              }
+                            }}
+                          >
+                            Open Latest Report
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     {incidents.length === 0 ? (
                       <div className="empty-state">No production crashes detected. System is stable.</div>
                     ) : (
-                      <div className="incidents-list" style={{display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '16px'}}>
-                        {incidents.map((inc, idx) => (
-                          <div key={idx} className="ic-card" style={{padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                      <div className="incidents-list" style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '16px' }}>
+                        {incidents.map((inc) => (
+                          <div key={inc.incident_id} className="ic-card" style={{ padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <div>
-                              <div style={{display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px'}}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
                                 <span style={{
                                   background: 'rgba(248,81,73,0.1)', color: '#f85149', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold'
                                 }}>EXIT {inc.exit_code}</span>
-                                <strong style={{color: '#e6edf3', fontSize: '14px'}}>{inc.incident_id}</strong>
-                                <span style={{color: '#8b949e', fontSize: '12px'}}>• {new Date(inc.created_at).toLocaleString()}</span>
+                                <strong style={{ color: '#e6edf3', fontSize: '14px' }}>{inc.incident_id}</strong>
+                                <span style={{ color: '#8b949e', fontSize: '12px' }}>• {new Date(inc.created_at).toLocaleString()}</span>
                               </div>
-                              <div style={{color: '#8b949e', fontSize: '12px'}}>{inc.summary}</div>
+                              <div style={{ color: '#8b949e', fontSize: '12px' }}>{inc.summary}</div>
                             </div>
                             <button className="btn-dash-primary" onClick={async () => {
                               try {
-                                const [ws, pn] = p.cloneCode.split('/');
+                                if (!activeProjectData) return;
+                                const [ws, pn] = activeProjectData.cloneCode.split('/');
                                 const res = await fetch(`${BACKEND}/api/repo/${ws}/${pn}/incidents/${inc.incident_id}`);
                                 if (res.ok) {
                                   const data = await res.json();
-                                  setViewingIncident(data);
+                                  setViewingIncident({
+                                    ...data,
+                                    report_markdown: buildIncidentMarkdown(data),
+                                  });
                                 }
-                              } catch (e) {}
+                              } catch (e) { }
                             }}>View AI Report</button>
                           </div>
                         ))}
@@ -1110,12 +1324,12 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                   </div>
 
                   {/* ── Functions Discovery (Middle Screen) ── */}
-                  <div className="functions-discovery-main" style={{marginTop: '30px'}}>
+                  <div className="functions-discovery-main" style={{ marginTop: '30px' }}>
                     <div className="section-title">
                       <h3>🛠️ Discovered Functions</h3>
                       <span className="badge">{graphData?.nodes.filter((n: GraphNode) => n.data.type === 'Function').length || 0}</span>
                     </div>
-                    
+
                     <div style={{
                       display: 'grid',
                       gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
@@ -1126,13 +1340,13 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                         .filter((n: GraphNode) => n.data.type === 'Function')
                         .sort((a: GraphNode, b: GraphNode) => b.data.blast_radius - a.data.blast_radius)
                         .map((fn: GraphNode) => (
-                          <div key={fn.id} className="ic-card" style={{padding: '16px', marginBottom: 0, border: '1px solid #30363d'}}>
-                            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px'}}>
-                              <div style={{maxWidth: '70%'}}>
-                                <h4 style={{margin: 0, fontSize: '14px', color: '#e6edf3', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>
+                          <div key={fn.id} className="ic-card" style={{ padding: '16px', marginBottom: 0, border: '1px solid #30363d' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                              <div style={{ maxWidth: '70%' }}>
+                                <h4 style={{ margin: 0, fontSize: '14px', color: '#e6edf3', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                   {fn.data.label}
                                 </h4>
-                                <code style={{fontSize: '10px', color: '#8b949e'}}>{fn.data.file}</code>
+                                <code style={{ fontSize: '10px', color: '#8b949e' }}>{fn.data.file}</code>
                               </div>
                               <span style={{
                                 fontSize: '10px',
@@ -1146,24 +1360,24 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                                 {fn.data.status}
                               </span>
                             </div>
-                            
-                            <div style={{display: 'flex', gap: '12px', marginTop: '12px'}}>
-                              <div style={{flex: 1}}>
-                                <div style={{display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#8b949e', marginBottom: '4px'}}>
+
+                            <div style={{ display: 'flex', gap: '12px', marginTop: '12px' }}>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#8b949e', marginBottom: '4px' }}>
                                   <span>Security</span>
                                   <span>{fn.data.security_score}%</span>
                                 </div>
-                                <div style={{height: '3px', background: '#21262d', borderRadius: '2px'}}>
-                                  <div style={{height: '100%', background: '#f85149', width: `${fn.data.security_score}%`, borderRadius: '2px'}} />
+                                <div style={{ height: '3px', background: '#21262d', borderRadius: '2px' }}>
+                                  <div style={{ height: '100%', background: '#f85149', width: `${fn.data.security_score}%`, borderRadius: '2px' }} />
                                 </div>
                               </div>
-                              <div style={{flex: 1}}>
-                                <div style={{display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#8b949e', marginBottom: '4px'}}>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#8b949e', marginBottom: '4px' }}>
                                   <span>Connections</span>
                                   <span>{fn.data.blast_radius}</span>
                                 </div>
-                                <div style={{height: '3px', background: '#21262d', borderRadius: '2px'}}>
-                                  <div style={{height: '100%', background: '#388bfd', width: `${Math.min(100, fn.data.blast_radius * 10)}%`, borderRadius: '2px'}} />
+                                <div style={{ height: '3px', background: '#21262d', borderRadius: '2px' }}>
+                                  <div style={{ height: '100%', background: '#388bfd', width: `${Math.min(100, fn.data.blast_radius * 10)}%`, borderRadius: '2px' }} />
                                 </div>
                               </div>
                             </div>
@@ -1171,7 +1385,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                         ))
                       }
                       {(!graphData || graphData.nodes.filter((n: GraphNode) => n.data.type === 'Function').length === 0) && (
-                        <div className="empty-state" style={{gridColumn: '1/-1'}}>
+                        <div className="empty-state" style={{ gridColumn: '1/-1' }}>
                           No functions discovered yet. Analyze the repository to build the graph.
                         </div>
                       )}
@@ -1209,7 +1423,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                           <div className="term-line term-line-interactive">
                             <span><span className="term-prompt">$</span> nexus connect {BACKEND} {p.cloneCode}</span>
                             <button className="clone-copy inline-copy" onClick={() => navigator.clipboard.writeText(`nexus connect ${BACKEND} ${p.cloneCode}`)} title="Copy">
-                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
                             </button>
                           </div>
                         </div>
@@ -1222,7 +1436,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                           <div className="term-line term-line-interactive">
                             <span><span className="term-prompt">$</span> nexus push && nexus analyze</span>
                             <button className="clone-copy inline-copy" onClick={() => navigator.clipboard.writeText(`nexus push && nexus analyze`)} title="Copy">
-                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
                             </button>
                           </div>
                         </div>
@@ -1239,9 +1453,9 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                     <div className="add-member-widget">
                       <div className="widget-label">&rarr; ATTACH_MEMBER</div>
                       <div className="widget-row">
-                        <input className="dash-input w-name" placeholder="Full name" value={newMem.name} onChange={e => setNewMem({...newMem, name: e.target.value})} />
-                        <input className="dash-input w-email" placeholder="Email contact" value={newMem.email} onChange={e => setNewMem({...newMem, email: e.target.value})} />
-                        <select className="dash-select w-role" value={newMem.role} onChange={e => setNewMem({...newMem, role: e.target.value})}>
+                        <input className="dash-input w-name" placeholder="Full name" value={newMem.name} onChange={e => setNewMem({ ...newMem, name: e.target.value })} />
+                        <input className="dash-input w-email" placeholder="Email contact" value={newMem.email} onChange={e => setNewMem({ ...newMem, email: e.target.value })} />
+                        <select className="dash-select w-role" value={newMem.role} onChange={e => setNewMem({ ...newMem, role: e.target.value })}>
                           <option value="developer">developer</option>
                           <option value="admin">admin</option>
                           <option value="viewer">viewer</option>
@@ -1315,7 +1529,16 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
           <div className="fvm-content" style={{ maxWidth: '800px' }}>
             <div className="fvm-header" style={{ borderBottom: '1px solid #f85149', background: 'rgba(248,81,73,0.05)' }}>
               <span className="fvm-title" style={{ color: '#f85149' }}>🚨 AI Forensic Report: {viewingIncident.incident_id}</span>
-              <button className="fvm-close" onClick={() => setViewingIncident(null)}>✕</button>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button
+                  className="btn-dash-secondary"
+                  style={{ padding: '6px 12px', fontSize: '12px' }}
+                  onClick={() => downloadIncidentReport(viewingIncident)}
+                >
+                  Download .md
+                </button>
+                <button className="fvm-close" onClick={() => setViewingIncident(null)}>✕</button>
+              </div>
             </div>
             <div className="fvm-body" style={{ padding: '24px', background: '#0d1117' }}>
               <SyntaxHighlighter
@@ -1324,7 +1547,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                 customStyle={{ margin: 0, padding: 0, background: 'transparent', fontSize: '14px' }}
                 wrapLines={true}
               >
-                {viewingIncident.report_markdown || 'No markdown generated.'}
+                {buildIncidentMarkdown(viewingIncident)}
               </SyntaxHighlighter>
             </div>
           </div>

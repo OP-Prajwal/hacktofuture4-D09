@@ -32,14 +32,14 @@ const Onboarding = ({ onLaunch }: OnboardingProps) => {
       const payload = type === 'enterprise' ? {
         type: 'enterprise',
         name: ent.name,
-        email: ent.email,
+        email: ent.email.trim().toLowerCase(),
         password: ent.password,
         company: ent.company,
         role: ent.role
       } : {
         type: 'individual',
         name: ind.name,
-        email: ind.email,
+        email: ind.email.trim().toLowerCase(),
         password: ind.password,
         company: '',
         role: ind.role
@@ -69,10 +69,14 @@ const Onboarding = ({ onLaunch }: OnboardingProps) => {
     setLoading(true);
     setErrorMsg('');
     try {
+      const payload = {
+        email: loginForm.email.trim().toLowerCase(),
+        password: loginForm.password
+      };
       const res = await fetch(`${BACKEND}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(loginForm)
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Login failed');

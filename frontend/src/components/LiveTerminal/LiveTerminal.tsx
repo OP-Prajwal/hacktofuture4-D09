@@ -45,6 +45,19 @@ export default function LiveTerminal({ workspace, project, onFileClick }: LiveTe
     termInstance.current.writeln(`${color}${text}${reset}`);
   }, []);
 
+  const writeWelcome = useCallback(() => {
+    if (!termInstance.current) return;
+    const term = termInstance.current;
+    term.writeln('\x1b[36m╔══════════════════════════════════════╗\x1b[0m');
+    term.writeln('\x1b[36m║   NEXUS-X Live CI/CD Terminal       ║\x1b[0m');
+    term.writeln('\x1b[36m╚══════════════════════════════════════╝\x1b[0m');
+    term.writeln('');
+    term.writeln('\x1b[90mWaiting for runner connection...\x1b[0m');
+    term.writeln(`\x1b[90mWatching ${workspace}/${project}\x1b[0m`);
+    term.writeln('\x1b[90mConnect a runner: nexus run <command>\x1b[0m');
+    term.writeln('');
+  }, [workspace, project]);
+
   // Initialize xterm
   useEffect(() => {
     if (!termRef.current) return;
@@ -90,14 +103,9 @@ export default function LiveTerminal({ workspace, project, onFileClick }: LiveTe
     termInstance.current = term;
     fitAddon.current = fit;
 
-    // Welcome message
-    term.writeln('\x1b[36m╔══════════════════════════════════════╗\x1b[0m');
-    term.writeln('\x1b[36m║   NEXUS-X Live CI/CD Terminal       ║\x1b[0m');
-    term.writeln('\x1b[36m╚══════════════════════════════════════╝\x1b[0m');
-    term.writeln('');
-    term.writeln('\x1b[90mWaiting for runner connection...\x1b[0m');
-    term.writeln('\x1b[90mConnect a runner: nexus-runner daemon --project ' + project + '\x1b[0m');
-    term.writeln('');
+    setStatus('idle');
+    setDiagnosis(null);
+    writeWelcome();
 
     // Handle resize
     const handleResize = () => {
@@ -110,10 +118,13 @@ export default function LiveTerminal({ workspace, project, onFileClick }: LiveTe
       term.dispose();
       termInstance.current = null;
     };
-  }, [project]);
+  }, [workspace, project, writeWelcome]);
 
   // WebSocket connection
   useEffect(() => {
+    setStatus('idle');
+    setDiagnosis(null);
+
     const wsUrl = `${BACKEND_WS}/ws/viewer/${workspace}/${project}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
@@ -154,6 +165,9 @@ export default function LiveTerminal({ workspace, project, onFileClick }: LiveTe
         if (data.has_runner) {
           writeToTerminal('\x1b[32m● Runner is connected. Streaming logs...\x1b[0m');
         }
+        if ((data.log_count as number) > 0) {
+          writeToTerminal(`\x1b[90m● Replaying ${(data.log_count as number)} buffered log entries\x1b[0m`);
+        }
         break;
 
       case 'system':
@@ -181,12 +195,12 @@ export default function LiveTerminal({ workspace, project, onFileClick }: LiveTe
         break;
       }
 
-      case 'auto_heal_start':
+      case 'incident_analysis_start':
         writeToTerminal('\x1b[35m\n🔧 Auto-healing: Analyzing failure with AI...\x1b[0m');
         break;
 
-      case 'auto_heal_result':
-        setDiagnosis(data.result as DiagnosisResult);
+      case 'incident_report':
+        setDiagnosis((data.result as DiagnosisResult) || null);
         writeToTerminal('\x1b[35m✓ AI diagnosis ready — see panel below\x1b[0m');
         break;
 

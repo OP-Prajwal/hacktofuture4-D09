@@ -7,6 +7,18 @@ from orchestrator.llm import OrchestratorLLM
 from orchestrator.state import OrchestratorState
 
 
+LANGUAGE_BY_EXTENSION = {
+    ".py": "python",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".go": "go",
+    ".java": "java",
+    ".rb": "ruby",
+}
+
+
 def write_report(state: OrchestratorState, output_dir: Path, llm: OrchestratorLLM) -> OrchestratorState:
     incident = state["incident"]
     locations = state.get("locations", [])
@@ -64,6 +76,9 @@ def write_report(state: OrchestratorState, output_dir: Path, llm: OrchestratorLL
             locations[0] if locations else None,
         )
 
+    language = _detect_language(source_location.path if source_location else "")
+    code_fence = _code_fence(language)
+
     # ── 3. Read real source file & show crash-line context ────────────────────
     source_snippet = ""
     source_file_content = ""
@@ -93,7 +108,7 @@ def write_report(state: OrchestratorState, output_dir: Path, llm: OrchestratorLL
 
     # ── 3. Generate all possible fixes ─────────────────────────────────────────
     generated_fixes = _generate_fixes(
-        incident, source_location, source_file_content, crash_line_no, llm
+        incident, source_location, source_file_content, crash_line_no, llm, language
     )
 
     # ── 4. Assemble the single report ─────────────────────────────────────────
@@ -141,7 +156,7 @@ def write_report(state: OrchestratorState, output_dir: Path, llm: OrchestratorLL
         ]
         if source_snippet:
             out += [
-                "```python",
+                f"```{code_fence}",
                 source_snippet,
                 "```",
                 "",
@@ -163,12 +178,12 @@ def write_report(state: OrchestratorState, output_dir: Path, llm: OrchestratorLL
             f"**When to use:** {fix['when']}",
             "",
             "**Before (broken):**",
-            "```python",
+            f"```{code_fence}",
             fix["before"],
             "```",
             "",
             "**After (fixed):**",
-            "```python",
+            f"```{code_fence}",
             fix["after"],
             "```",
             "",
@@ -192,8 +207,8 @@ def write_report(state: OrchestratorState, output_dir: Path, llm: OrchestratorLL
         "## ✅ Immediate Next Steps",
         "",
         "1. Apply **Fix 1** from the section above.",
-        "2. Add a regression test: `assert login_user(None, 'x') raises ValueError`.",
-        "3. Re-run the CI pipeline to confirm the build turns green.",
+        f"2. Add a regression test around `{source_location.path if source_location else incident.service}` covering this failure mode.",
+        "3. Re-run the deployment or CI pipeline to confirm the service stays healthy.",
         "4. If the issue persists, escalate with the full stack trace to the on-call team.",
         "",
     ]
@@ -212,24 +227,24 @@ def write_report(state: OrchestratorState, output_dir: Path, llm: OrchestratorLL
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _generate_fixes(
-    incident, source_location, source_file_content: str, crash_line_no, llm: OrchestratorLLM
+    incident, source_location, source_file_content: str, crash_line_no, llm: OrchestratorLLM, language: str
 ) -> list[dict]:
     fixes: list[dict] = []
 
     # LLM fix is always rank 1 when available
     if llm.is_enabled() and source_file_content:
-        llm_fix = _llm_fix(llm, incident, source_file_content, crash_line_no)
+        llm_fix = _llm_fix(llm, incident, source_file_content, crash_line_no, language)
         if llm_fix:
             fixes.append({"rank": 1, **llm_fix})
 
     # Pattern-based fixes fill the rest
-    for i, fix in enumerate(_pattern_fixes(incident.error_summary, source_location, source_file_content, crash_line_no), start=len(fixes) + 1):
+    for i, fix in enumerate(_pattern_fixes(incident.error_summary, source_location, source_file_content, crash_line_no, language), start=len(fixes) + 1):
         fixes.append({"rank": i, **fix})
 
     return fixes[:5]
 
 
-def _llm_fix(llm: OrchestratorLLM, incident, source_code: str, crash_line: int | None) -> dict | None:
+def _llm_fix(llm: OrchestratorLLM, incident, source_code: str, crash_line: int | None, language: str) -> dict | None:
     import json, re
     from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -237,16 +252,18 @@ def _llm_fix(llm: OrchestratorLLM, incident, source_code: str, crash_line: int |
     if client is None:
         return None
 
+    language_label = language or "plaintext"
+
     prompt = (
-        f"A Python CI/CD pipeline crashed with:\n  {incident.error_summary}\n\n"
+        f"A {language_label} service crashed with:\n  {incident.error_summary}\n\n"
         f"Stack trace:\n{incident.stack_trace[:800]}\n\n"
-        f"Source file:\n```python\n{source_code[:2000]}\n```\n\n"
+        f"Source file:\n```{language_label}\n{source_code[:2000]}\n```\n\n"
         'Return a JSON object with keys: "title", "when", "before", "after", "why". '
         "before/after should be 3-6 line code snippets. JSON only, no markdown."
     )
     try:
         response = client.invoke([
-            SystemMessage(content="You are a senior Python engineer producing precise fix patches."),
+            SystemMessage(content=f"You are a senior {language_label} engineer producing precise fix patches."),
             HumanMessage(content=prompt),
         ])
         text = re.sub(r"```json\s*|```\s*", "", llm._get_content(response)).strip()
@@ -255,14 +272,61 @@ def _llm_fix(llm: OrchestratorLLM, incident, source_code: str, crash_line: int |
         return None
 
 
-def _pattern_fixes(error: str, location, source_code: str, crash_line: int | None) -> list[dict]:
+def _pattern_fixes(error: str, location, source_code: str, crash_line: int | None, language: str) -> list[dict]:
     import re
 
     fixes: list[dict] = []
     before_ctx = _extract_crash_context(source_code, crash_line, window=4)
     file_label = location.path if location else "the affected file"
+    lower_error = error.lower()
 
-    if "nonetype" in error.lower() and "attribute" in error.lower():
+    if language in {"javascript", "typescript"}:
+        fixes.append({
+            "title": "Guard the boot failure path and log the failing condition explicitly",
+            "when": "The service is crashing during startup or immediately after boot with a synthetic or real runtime error.",
+            "before": before_ctx or (
+                "if (failOnBoot) {\n"
+                "  throw new Error('boot failure');\n"
+                "}"
+            ),
+            "after": (
+                "if (failOnBoot) {\n"
+                "  console.error('[telemetry] boot failure', { failOnBoot });\n"
+                "  process.exit(2);\n"
+                "}"
+            ),
+            "why": "Startup failures should be intentional, explicit, and logged with enough context for incident analysis."
+        })
+
+        if "not defined" in lower_error or "undefined" in lower_error:
+            fixes.append({
+                "title": "Validate required values before using them in the failing code path",
+                "when": "A variable, config value, or request field may be `undefined` in the crash path.",
+                "before": before_ctx or "const value = config.token.trim();",
+                "after": (
+                    "if (!config?.token) {\n"
+                    "  throw new Error('Missing required token');\n"
+                    "}\n"
+                    "const value = config.token.trim();"
+                ),
+                "why": "Explicit guards turn ambiguous runtime failures into clear actionable errors and prevent cascading crashes."
+            })
+        elif "build exploded" in lower_error or "boot failure" in lower_error:
+            fixes.append({
+                "title": "Gate intentional test crashes behind an environment flag or route",
+                "when": "You only want failure injection in controlled test scenarios, not every deployment.",
+                "before": before_ctx or "const failOnBoot = true;",
+                "after": (
+                    "const failOnBoot = process.env.FAIL_MODE === 'true';\n"
+                    "if (failOnBoot) {\n"
+                    "  process.exit(2);\n"
+                    "}"
+                ),
+                "why": "This keeps telemetry verification available while preventing accidental production crashes."
+            })
+        return fixes[:5]
+
+    if "nonetype" in lower_error and "attribute" in lower_error:
         attr_m = re.search(r"has no attribute '(.+?)'", error)
         attr = attr_m.group(1) if attr_m else "strip"
 
@@ -326,3 +390,12 @@ def _extract_crash_context(source_code: str, crash_line: int | None, window: int
     start = max(0, crash_line - window - 1)
     end = min(len(lines), crash_line + window - 1)
     return "\n".join(lines[start:end])
+
+
+def _detect_language(path: str) -> str:
+    suffix = Path(path).suffix.lower()
+    return LANGUAGE_BY_EXTENSION.get(suffix, "plaintext")
+
+
+def _code_fence(language: str) -> str:
+    return language if language != "plaintext" else ""

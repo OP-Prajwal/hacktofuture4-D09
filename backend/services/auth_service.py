@@ -12,6 +12,10 @@ JWT_SECRET = os.getenv("JWT_SECRET", "super_secret_fallback")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 7 days
 
+
+def normalize_email(email: str) -> str:
+    return email.strip().lower()
+
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
@@ -39,6 +43,8 @@ def generate_slug(name: str):
     return slug
 
 def register_user(workspace_type: str, email: str, password: str, name: str, company: str, role: str):
+    email = normalize_email(email)
+    password = password.strip()
     users = mongo.get_collection("users")
     workspaces = mongo.get_collection("workspaces")
     
@@ -90,6 +96,8 @@ def register_user(workspace_type: str, email: str, password: str, name: str, com
     }
 
 def login_user(email: str, password: str):
+    email = normalize_email(email)
+    password = password.strip()
     users = mongo.get_collection("users")
     user = users.find_one({"email": email})
     

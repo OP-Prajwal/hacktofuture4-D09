@@ -20,6 +20,17 @@ from datetime import datetime, timezone
 from db.mongo import mongo
 
 
+def _json_safe(value):
+    """Best-effort conversion for Mongo-storable incident payloads."""
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+    return str(value)
+
+
 def trigger_incident_analysis(
     workspace: str,
     project: str,
@@ -35,6 +46,7 @@ def trigger_incident_analysis(
     """
     print(f"\n{'='*60}")
     print(f"[AutoHeal] Failure detected for {workspace}/{project}")
+    print("in trigg ",workspace,project)
     if repo_root:
         print(f"[AutoHeal] Repo root: {repo_root}")
     print(f"[AutoHeal] Exit code: {exit_code}")
@@ -95,13 +107,24 @@ def trigger_incident_analysis(
         nexus_api_url = os.getenv("NEXUS_API_URL", "http://localhost:8000")
         os.environ["NEXUS_API_URL"] = nexus_api_url
 
+        graph_project = f"{workspace}/{project}"
+        resolved_repo_root = Path(repo_root) if repo_root else None
+        print(f"[AutoHeal] Orchestrator repo_root={resolved_repo_root}")
+        print(f"[AutoHeal] Orchestrator graph_project={graph_project}")
+        print(f"[AutoHeal] Orchestrator api_url={nexus_api_url}")
+
         app = build_workflow(
             connector_registry=registry,
-            repo_root=Path(repo_root) if repo_root else None,
+            repo_root=resolved_repo_root,
+            graph_project=graph_project,
             llm=llm,
         )
 
-        result = app.invoke({"incident": incident})
+        result = app.invoke({
+            "incident": incident,
+            "repo_root": resolved_repo_root,
+            "graph_project": graph_project,
+        })
 
         # Extract diagnosis
         hypotheses = result.get("hypotheses", [])
@@ -207,21 +230,26 @@ def _generate_fallback_report(diagnosis: dict, workspace: str, project: str, exi
 
 def _store_report(workspace: str, project: str, diagnosis: dict, exit_code: int, logs: list[str]):
     """Persist the incident report to MongoDB for Dashboard access."""
-    reports_col = mongo.get_collection("incident_reports")
-    reports_col.insert_one({
+    payload = {
         "workspace": workspace,
         "project": project,
         "incident_id": diagnosis.get("incident_id"),
         "status": diagnosis.get("status"),
         "summary": diagnosis.get("summary"),
         "exit_code": exit_code,
-        "hypotheses": diagnosis.get("hypotheses", []),
-        "code_locations": diagnosis.get("code_locations", []),
+        "hypotheses": _json_safe(diagnosis.get("hypotheses", [])),
+        "code_locations": _json_safe(diagnosis.get("code_locations", [])),
         "report_markdown": diagnosis.get("report_markdown", ""),
         "log_lines": len(logs),
         "created_at": datetime.now(timezone.utc).isoformat(),
-    })
-    print(f"[AutoHeal] Report stored in MongoDB: incident_reports/{diagnosis.get('incident_id')}")
+    }
+
+    try:
+        reports_col = mongo.get_collection("incident_reports")
+        reports_col.insert_one(payload)
+        print(f"[AutoHeal] Report stored in MongoDB: incident_reports/{diagnosis.get('incident_id')}")
+    except Exception as e:
+        print(f"[AutoHeal] Failed to store incident report: {e}")
 
 
 def _fallback_analysis(

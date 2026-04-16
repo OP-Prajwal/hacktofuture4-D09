@@ -93,6 +93,8 @@ class RunnerConnectionManager:
         """Process an incoming message from a CI runner."""
         session = self.get_session(workspace, project)
         msg_type = data.get("type", "log")
+        
+        print(f"[RunnerHub] Handling {msg_type} for {workspace}/{project}")
 
         if msg_type == "log":
             log_entry = {
@@ -106,6 +108,7 @@ class RunnerConnectionManager:
 
         elif msg_type == "exit":
             exit_code = data.get("code", 1)
+            print(f"[RunnerHub] Process exited with code {exit_code} for {workspace}/{project}")
             session.exit_code = exit_code
             session.status = "success" if exit_code == 0 else "failed"
 
@@ -144,6 +147,7 @@ class RunnerConnectionManager:
             "status": session.status,
             "log_count": len(session.logs),
             "has_runner": session.runner is not None,
+            "exit_code": session.exit_code,
         })
 
         # Replay existing logs so viewer catches up
@@ -175,6 +179,7 @@ class RunnerConnectionManager:
         # Collect last 50 log lines as context
         recent_logs = [entry.get("line", "") for entry in session.logs[-50:]]
         error_lines = [entry.get("line", "") for entry in session.logs if entry.get("stream") == "stderr"][-20:]
+        event_loop = asyncio.get_running_loop()
 
         # Notify viewers that incident analysis is starting
         await self._broadcast_to_viewers(session, {
@@ -189,6 +194,7 @@ class RunnerConnectionManager:
             import threading
 
             def _run_analysis():
+                print("session ",session)
                 result = trigger_incident_analysis(
                     workspace=session.workspace,
                     project=session.project,
@@ -196,14 +202,20 @@ class RunnerConnectionManager:
                     error_lines=error_lines,
                     exit_code=session.exit_code or 1
                 )
-                # Store the analysis result for the Dashboard to pick up
-                session.logs.append({
+                report_message = {
                     "type": "incident_report",
                     "incident_id": result.get("incident_id"),
                     "summary": result.get("summary"),
                     "status": result.get("status"),
+                    "result": result,
                     "timestamp": time.time()
-                })
+                }
+                # Store the analysis result and push it live to connected viewers.
+                session.logs.append(report_message)
+                asyncio.run_coroutine_threadsafe(
+                    self._broadcast_to_viewers(session, report_message),
+                    event_loop
+                )
 
             thread = threading.Thread(target=_run_analysis, daemon=True)
             thread.start()

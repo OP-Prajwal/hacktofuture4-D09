@@ -1,4 +1,6 @@
 import json
+import time
+from datetime import datetime
 from fastapi import FastAPI, HTTPException, Request, Depends, Response, WebSocket, WebSocketDisconnect
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
@@ -330,14 +332,19 @@ from services.runner_hub import runner_hub
 @app.websocket("/ws/runner/{workspace}/{project_name}")
 async def ws_runner(websocket: WebSocket, workspace: str, project_name: str):
     """WebSocket endpoint for CI/CD runners to stream logs."""
-    await runner_hub.connect_runner(websocket, workspace, project_name)
+    print(f"[WS Runner] New connection request from {workspace}/{project_name}")
     try:
+        await runner_hub.connect_runner(websocket, workspace, project_name)
+        print(f"[WS Runner] Connected: {workspace}/{project_name}")
         while True:
             data = await websocket.receive_json()
+            print(f"[WS Runner] Data from {workspace}/{project_name}: {data.get('type')}")
             await runner_hub.handle_runner_message(workspace, project_name, data)
     except WebSocketDisconnect:
+        print(f"[WS Runner] Disconnected: {workspace}/{project_name}")
         await runner_hub.disconnect_runner(workspace, project_name)
-    except Exception:
+    except Exception as e:
+        print(f"[WS Runner] Error with {workspace}/{project_name}: {e}")
         await runner_hub.disconnect_runner(workspace, project_name)
 
 
@@ -374,6 +381,7 @@ async def ingest_logs(workspace: str, project_name: str, body: LogBatch):
     HTTP fallback for log ingestion when WebSocket isn't available.
     Stores logs in MongoDB and replays them to any connected Dashboard viewers.
     """
+    print(f"[HTTP Logs] Ingesting batch for {workspace}/{project_name}: {len(body.logs)} lines")
     session = runner_hub.get_session(workspace, project_name)
 
     for entry in body.logs:
@@ -384,24 +392,36 @@ async def ingest_logs(workspace: str, project_name: str, body: LogBatch):
             "timestamp": entry.get("ts", 0) / 1000
         }
         session.logs.append(log_entry)
+        await runner_hub._broadcast_to_viewers(session, log_entry)
 
     if body.exit_code is not None:
+        print(f"[HTTP Logs] Received exit code {body.exit_code} for {workspace}/{project_name}")
         session.exit_code = body.exit_code
         session.status = "success" if body.exit_code == 0 else "failed"
+        await runner_hub._broadcast_to_viewers(session, {
+            "type": "exit",
+            "code": body.exit_code,
+            "status": session.status,
+            "timestamp": time.time()
+        })
         
         # Trigger the Orchestrator if the process crashed!
         if body.exit_code != 0:
             print(f"[HTTP Logs] Received exit code {body.exit_code}! Triggering Orchestrator...")
             await runner_hub._on_ci_failure(session)
 
-    logs_col = mongo.get_collection("runtime_logs")
-    logs_col.insert_one({
-        "workspace": workspace,
-        "project": project_name,
-        "logs": body.logs,
-        "exit_code": body.exit_code,
-        "total_lines": len(body.logs),
-    })
+    try:
+        logs_col = mongo.get_collection("runtime_logs")
+        logs_col.insert_one({
+            "workspace": workspace,
+            "project": project_name,
+            "logs": body.logs,
+            "exit_code": body.exit_code,
+            "total_lines": len(body.logs),
+            "created_at": datetime.utcnow()
+        })
+    except Exception as e:
+        print(f"[HTTP Logs] DB Store failed: {e}")
 
     return {
         "status": "ok",
@@ -442,12 +462,38 @@ def get_logs(workspace: str, project_name: str, limit: int = 200):
 @app.get("/api/repo/{workspace}/{project_name}/incidents")
 def list_incidents(workspace: str, project_name: str, limit: int = 20):
     """List all forensic incident reports for a project."""
+    print(f"[Incidents] Listing for {workspace}/{project_name}")
     reports_col = mongo.get_collection("incident_reports")
     docs = list(reports_col.find(
         {"workspace": workspace, "project": project_name},
         {"_id": 0, "report_markdown": 0}  # Exclude heavy fields from list
     ).sort("created_at", -1).limit(limit))
 
+    if not docs:
+        session = runner_hub.get_session(workspace, project_name)
+        docs = []
+        for entry in reversed(session.logs):
+            if entry.get("type") != "incident_report":
+                continue
+            result = entry.get("result") or {}
+            docs.append({
+                "workspace": workspace,
+                "project": project_name,
+                "incident_id": entry.get("incident_id"),
+                "status": entry.get("status"),
+                "summary": entry.get("summary"),
+                "exit_code": session.exit_code,
+                "hypotheses": result.get("hypotheses", []),
+                "code_locations": result.get("code_locations", []),
+                "created_at": datetime.utcnow().isoformat(),
+            })
+            if len(docs) >= limit:
+                break
+
+    print(f"[Incidents] Found {len(docs)} reports for {workspace}/{project_name}")
+    if len(docs) > 0:
+        print(f"[Incidents] IDs: {[d.get('incident_id') for d in docs]}")
+    
     return {"incidents": docs, "total": len(docs)}
 
 
@@ -459,6 +505,25 @@ def get_incident(workspace: str, project_name: str, incident_id: str):
         {"workspace": workspace, "project": project_name, "incident_id": incident_id},
         {"_id": 0}
     )
+    if not doc:
+        session = runner_hub.get_session(workspace, project_name)
+        for entry in reversed(session.logs):
+            if entry.get("type") != "incident_report" or entry.get("incident_id") != incident_id:
+                continue
+            result = entry.get("result") or {}
+            doc = {
+                "workspace": workspace,
+                "project": project_name,
+                "incident_id": incident_id,
+                "status": entry.get("status"),
+                "summary": entry.get("summary"),
+                "exit_code": session.exit_code,
+                "hypotheses": result.get("hypotheses", []),
+                "code_locations": result.get("code_locations", []),
+                "report_markdown": result.get("report_markdown", "No markdown generated."),
+                "created_at": datetime.utcnow().isoformat(),
+            }
+            break
     if not doc:
         raise HTTPException(status_code=404, detail="Incident report not found")
     return doc
