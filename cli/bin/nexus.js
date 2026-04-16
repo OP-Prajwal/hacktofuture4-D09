@@ -7,6 +7,7 @@ import path from 'path';
 import fs from 'fs';
 import ora from 'ora';
 import crypto from 'crypto';
+import { spawn, spawnSync } from 'child_process';
 
 const program = new Command();
 const NEXUS_DIR = '.nexus';
@@ -114,9 +115,9 @@ async function streamFileToBackend(api, file) {
         'Content-Type': 'application/octet-stream',
         'Transfer-Encoding': 'chunked',
         'X-Nexus-Meta': JSON.stringify({
-          name:       file.name,
-          extension:  file.extension,
-          size:       file.size
+          name: file.name,
+          extension: file.extension,
+          size: file.size
         })
       },
       maxBodyLength: Infinity,
@@ -237,7 +238,7 @@ program
     }
 
     const toUpload = fileRecords.filter(f => missingHashes.has(f.hash));
-    const skipped  = fileRecords.length - toUpload.length;
+    const skipped = fileRecords.length - toUpload.length;
     preSpinner.succeed(chalk.gray(
       `Delta: ${toUpload.length} new blob(s), ${skipped} already stored.`
     ));
@@ -273,10 +274,10 @@ program
       const { data } = await axios.post(`${api}/commit`, {
         manifest,
         metadata: {
-          push_source:  currentDir,
-          local_path:   currentDir,
-          total_files:  fileRecords.length,
-          new_blobs:    toUpload.length,
+          push_source: currentDir,
+          local_path: currentDir,
+          total_files: fileRecords.length,
+          new_blobs: toUpload.length,
           skipped_blobs: skipped
         }
       }, { timeout: 15_000 });
@@ -329,7 +330,7 @@ program
 // ─── Live Telemetry Agent ─────────────────────────────────────────────────────
 
 program
-  .command('run [args...]')
+  .command('attach [args...]')
   .description('Run a production process and stream all logs/errors live to Nexus-X')
   .action(async (args) => {
     if (args.length === 0) {
@@ -401,7 +402,6 @@ program
     }
 
     // ── Spawn the wrapped process ──
-    const { spawn } = require('child_process');
     const child = spawn(args[0], args.slice(1), {
       shell: true,
       cwd: process.cwd(),
@@ -465,6 +465,95 @@ program
     process.on('SIGTERM', () => {
       child.kill('SIGTERM');
     });
+  });
+
+// ─── Inject / Eject Monitoring ────────────────────────────────────────────────
+
+program
+  .command('inject')
+  .description('Inject Nexus-X telemetry into package.json scripts so production monitoring is automatic')
+  .option('-s, --script <name>', 'Script name to wrap (default: start)', 'start')
+  .action((opts) => {
+    const pkgPath = path.join(process.cwd(), 'package.json');
+    if (!fs.existsSync(pkgPath)) {
+      console.error(chalk.red('Fatal: No package.json found in current directory.'));
+      process.exit(1);
+    }
+
+    // Ensure nexus config exists
+    if (!fs.existsSync(getConfigPath())) {
+      console.error(chalk.red('Fatal: Not a NEXUS repo. Run `nexus connect <server> <workspace>/<project>` first.'));
+      process.exit(1);
+    }
+
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+    if (!pkg.scripts) {
+      console.error(chalk.red('Fatal: No "scripts" found in package.json.'));
+      process.exit(1);
+    }
+
+    const scriptName = opts.script;
+    const original = pkg.scripts[scriptName];
+
+    if (!original) {
+      console.error(chalk.red(`Fatal: No "${scriptName}" script found in package.json.`));
+      console.log(chalk.gray(`  Available scripts: ${Object.keys(pkg.scripts).join(', ')}`));
+      process.exit(1);
+    }
+
+    // Check if already injected
+    if (original.startsWith('nexus attach ')) {
+      console.log(chalk.yellow(`⚠ Script "${scriptName}" is already wrapped with nexus attach.`));
+      console.log(chalk.gray(`  Current: "${original}"`));
+      return;
+    }
+
+    // Backup and inject
+    const backupKey = `nexus:original-${scriptName}`;
+    pkg.scripts[backupKey] = original;
+    pkg.scripts[scriptName] = `nexus attach ${original}`;
+
+    fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+
+    console.log(chalk.cyan('\n🔧 NEXUS-X Production Monitoring Injected\n'));
+    console.log(chalk.white(`  Script:   ${chalk.bold(scriptName)}`));
+    console.log(chalk.white(`  Before:   ${chalk.gray(original)}`));
+    console.log(chalk.white(`  After:    ${chalk.green(`nexus attach ${original}`)}`));
+    console.log(chalk.white(`  Backup:   ${chalk.gray(`scripts["${backupKey}"]`)}\n`));
+    console.log(chalk.green(`✓ Now when you run \`npm ${scriptName === 'start' ? 'start' : `run ${scriptName}`}\`, Nexus-X will automatically stream logs.\n`));
+  });
+
+program
+  .command('eject')
+  .description('Remove Nexus-X telemetry injection from package.json and restore original scripts')
+  .option('-s, --script <name>', 'Script name to restore (default: start)', 'start')
+  .action((opts) => {
+    const pkgPath = path.join(process.cwd(), 'package.json');
+    if (!fs.existsSync(pkgPath)) {
+      console.error(chalk.red('Fatal: No package.json found in current directory.'));
+      process.exit(1);
+    }
+
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+    const scriptName = opts.script;
+    const backupKey = `nexus:original-${scriptName}`;
+
+    if (!pkg.scripts?.[backupKey]) {
+      console.error(chalk.red(`No Nexus-X injection found for "${scriptName}". Nothing to eject.`));
+      return;
+    }
+
+    const injected = pkg.scripts[scriptName];
+    pkg.scripts[scriptName] = pkg.scripts[backupKey];
+    delete pkg.scripts[backupKey];
+
+    fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+
+    console.log(chalk.cyan('\n🔓 NEXUS-X Monitoring Ejected\n'));
+    console.log(chalk.white(`  Script:   ${chalk.bold(scriptName)}`));
+    console.log(chalk.white(`  Removed:  ${chalk.red(injected)}`));
+    console.log(chalk.white(`  Restored: ${chalk.green(pkg.scripts[scriptName])}\n`));
+    console.log(chalk.green('✓ Original script restored.\n'));
   });
 
 program

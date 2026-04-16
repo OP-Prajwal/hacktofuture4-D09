@@ -384,6 +384,7 @@ async def ingest_logs(workspace: str, project_name: str, body: LogBatch):
             "timestamp": entry.get("ts", 0) / 1000
         }
         session.logs.append(log_entry)
+        await runner_hub._broadcast_to_viewers(session, log_entry)
 
     if body.exit_code is not None:
         session.exit_code = body.exit_code

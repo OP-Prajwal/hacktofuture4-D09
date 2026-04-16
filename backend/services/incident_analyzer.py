@@ -98,6 +98,7 @@ def trigger_incident_analysis(
         app = build_workflow(
             connector_registry=registry,
             repo_root=Path(repo_root) if repo_root else None,
+            graph_project=f"{workspace}/{project}",
             llm=llm,
         )
 

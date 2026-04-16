@@ -137,6 +137,9 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
 
+  // Tab state
+  const [activeTab, setActiveTab] = useState<'repo' | 'agent' | 'functions' | 'server' | 'team'>('repo');
+
   // Blast Radius state
   const [blastFiles, setBlastFiles] = useState('');
   const [blastResult, setBlastResult] = useState<Record<string, unknown> | null>(null);
@@ -868,17 +871,22 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                 <p style={{ marginTop: '8px' }}>Your environment for <strong>{createdProject.name}</strong> is ready.</p>
               </div>
 
-              <div className="clone-box" style={{ background: '#000', border: '1px solid var(--accent2)' }}>
-                <div className="clone-label" style={{ color: 'var(--accent2)' }}>🚀 CONNECT COMMAND</div>
-                <p style={{ fontSize: '12px', color: 'var(--text2)', marginBottom: '12px' }}>Run this in your local repository to initialize, connect, and analyze the graph in one go.</p>
-                <div className="clone-cmd" style={{ background: 'rgba(88, 166, 255, 0.05)', borderColor: 'rgba(88, 166, 255, 0.2)' }}>
-                  <code style={{ fontSize: '12px', color: '#a5d6ff' }}>
-                    nexus connect {BACKEND} {createdProject.cloneCode} && nexus push && nexus analyze
-                  </code>
-                  <button className="clone-copy" onClick={() => {
-                    navigator.clipboard.writeText(`nexus connect ${BACKEND} ${createdProject.cloneCode} && nexus push && nexus analyze`);
+              <div className="clone-box" style={{ background: '#0d1117', border: '1px solid #30363d', borderRadius: '6px', textAlign: 'left', padding: '16px' }}>
+                <p style={{ fontSize: '13px', color: '#8b949e', marginBottom: '8px', fontWeight: 600 }}>…or connect an existing repository from the command line</p>
+                <div className="clone-cmd" style={{ background: '#010409', border: '1px solid #30363d', borderRadius: '6px', display: 'flex', alignItems: 'flex-start' }}>
+                  <pre style={{ margin: 0, padding: '16px', fontSize: '12px', color: '#e6edf3', fontFamily: 'monospace', lineHeight: '1.6', overflowX: 'auto', flex: 1 }}>
+                    <span style={{color: '#8b949e'}}># Link the local CLI (package not published to npm yet)</span>{'\n'}
+                    cd C:\nexus-X\cli && npm link{'\n\n'}
+                    <span style={{color: '#8b949e'}}># Initialize and connect the repository</span>{'\n'}
+                    nexus connect {BACKEND} {createdProject.cloneCode}{'\n\n'}
+                    <span style={{color: '#8b949e'}}># Push codebase to the platform and analyze it</span>{'\n'}
+                    nexus push{'\n'}
+                    nexus analyze
+                  </pre>
+                  <button className="clone-copy" style={{ margin: '8px' }} onClick={() => {
+                    navigator.clipboard.writeText(`cd C:\\nexus-X\\cli && npm link\nnexus connect ${BACKEND} ${createdProject.cloneCode}\nnexus push\nnexus analyze`);
                   }}>
-                    COPY
+                    <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z"></path><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"></path></svg>
                   </button>
                 </div>
               </div>
@@ -938,11 +946,84 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                     <p>{p.description || '// no description provided'}</p>
                   </div>
 
-                  {/* ── Intelligence Center ── */}
-                  <div className="intelligence-center">
-                    <div className="section-title">
-                      <h3>🧠 Intelligence Layer</h3>
+                  {treeLoading ? (
+                    <div className="empty-dashboard" style={{ marginTop: '40px' }}>
+                      <div className="loading-spinner-container">
+                        <div className="nexus-spinner"></div>
+                        <p>Scanning repository state...</p>
+                      </div>
                     </div>
+                  ) : noPush || !treeData ? (
+                    <div className="empty-dashboard" style={{ marginTop: '40px', padding: '60px 20px' }}>
+                      <div className="clone-box" style={{ background: '#000', border: '1px solid var(--accent2)', maxWidth: '600px', margin: '0 auto', textAlign: 'left' }}>
+                        <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+                          <div style={{ width: '48px', height: '48px', background: 'rgba(88, 166, 255, 0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+                          </div>
+                          <h3 style={{ margin: 0, color: 'var(--text)' }}>Waiting for first code push...</h3>
+                          <p style={{ marginTop: '8px', color: 'var(--text2)', fontSize: '14px' }}>Connect your local code to this workspace to unlock AI CI/CD and Graph Intelligence.</p>
+                        </div>
+                        
+                        <div className="clone-label" style={{ color: 'var(--accent2)' }}>1. LINK LOCAL CLI</div>
+                        <p style={{ fontSize: '12px', color: 'var(--text2)', marginBottom: '8px' }}>The package is not on npm yet. Link the local CLI directory.</p>
+                        <div className="clone-cmd" style={{ background: 'rgba(88, 166, 255, 0.05)', borderColor: 'rgba(88, 166, 255, 0.2)', marginBottom: '16px' }}>
+                          <code style={{ fontSize: '12px', color: '#a5d6ff' }}>cd C:\nexus-X\cli && npm link</code>
+                        </div>
+
+                        <div className="clone-label" style={{ color: 'var(--accent2)' }}>2. CONNECT & INITIALIZE</div>
+                        <div className="clone-cmd" style={{ background: 'rgba(88, 166, 255, 0.05)', borderColor: 'rgba(88, 166, 255, 0.2)', marginBottom: '16px' }}>
+                          <code style={{ fontSize: '12px', color: '#a5d6ff' }}>
+                            nexus connect {BACKEND} {p.cloneCode}
+                          </code>
+                          <button className="clone-copy" onClick={() => navigator.clipboard.writeText(`nexus connect ${BACKEND} ${p.cloneCode}`)}>COPY</button>
+                        </div>
+
+                        <div className="clone-label" style={{ color: 'var(--accent2)' }}>3. PUSH & ANALYZE</div>
+                        <div className="clone-cmd" style={{ background: 'rgba(88, 166, 255, 0.05)', borderColor: 'rgba(88, 166, 255, 0.2)' }}>
+                          <code style={{ fontSize: '12px', color: '#a5d6ff' }}>
+                            nexus push && nexus analyze
+                          </code>
+                          <button className="clone-copy" onClick={() => navigator.clipboard.writeText(`nexus push && nexus analyze`)}>COPY</button>
+                        </div>
+                        
+                        <div style={{ textAlign: 'center', marginTop: '24px' }}>
+                          <button className="btn-dash-primary" onClick={() => fetchTree(p.cloneCode)}>Refresh</button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {/* ── Metric Cards ── */}
+                      <div className="metrics-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px', marginBottom: '30px' }}>
+                        <div className="metric-card" onClick={() => setActiveTab('repo')} style={{ cursor: 'pointer', background: '#0d1117', border: activeTab === 'repo' ? '1px solid #58a6ff' : '1px solid #30363d', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '12px', color: activeTab === 'repo' ? '#58a6ff' : '#8b949e', fontWeight: 600 }}>REPOSITORY</span>
+                          <span style={{ fontSize: '20px', color: '#e6edf3', fontWeight: 'bold', marginTop: '8px' }}>Synced</span>
+                        </div>
+                        <div className="metric-card" onClick={() => setActiveTab('agent')} style={{ cursor: 'pointer', background: '#0d1117', border: activeTab === 'agent' ? '1px solid #58a6ff' : '1px solid #30363d', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '12px', color: activeTab === 'agent' ? '#58a6ff' : '#8b949e', fontWeight: 600 }}>AUTO-HEALER AGENT</span>
+                          <span style={{ fontSize: '20px', color: '#3fb950', fontWeight: 'bold', marginTop: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}><span style={{width: '8px', height: '8px', background: '#3fb950', borderRadius: '50%'}}></span>Active</span>
+                        </div>
+                        <div className="metric-card" onClick={() => setActiveTab('functions')} style={{ cursor: 'pointer', background: '#0d1117', border: activeTab === 'functions' ? '1px solid #58a6ff' : '1px solid #30363d', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '12px', color: activeTab === 'functions' ? '#58a6ff' : '#8b949e', fontWeight: 600 }}>FUNCTIONS</span>
+                          <span style={{ fontSize: '20px', color: '#e6edf3', fontWeight: 'bold', marginTop: '8px' }}>{(graphData?.nodes || []).filter((n: GraphNode) => n.data.type === 'Function').length}</span>
+                        </div>
+                        <div className="metric-card" onClick={() => setActiveTab('server')} style={{ cursor: 'pointer', background: '#0d1117', border: activeTab === 'server' ? '1px solid #f85149' : '1px solid #30363d', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '12px', color: activeTab === 'server' ? '#f85149' : '#8b949e', fontWeight: 600 }}>LIVE SERVER</span>
+                          <span style={{ fontSize: '20px', color: incidents.length > 0 ? '#f85149' : '#3fb950', fontWeight: 'bold', marginTop: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{width: '8px', height: '8px', background: incidents.length > 0 ? '#f85149' : '#3fb950', borderRadius: '50%'}}></span>
+                            {incidents.length > 0 ? 'Crash Detected' : 'Stable'}
+                          </span>
+                        </div>
+                        <div className="metric-card" onClick={() => setActiveTab('team')} style={{ cursor: 'pointer', background: '#0d1117', border: activeTab === 'team' ? '1px solid #58a6ff' : '1px solid #30363d', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '12px', color: activeTab === 'team' ? '#58a6ff' : '#8b949e', fontWeight: 600 }}>TEAM MEMBERS</span>
+                          <span style={{ fontSize: '20px', color: '#e6edf3', fontWeight: 'bold', marginTop: '8px' }}>{(p.members || []).length || 1}</span>
+                        </div>
+                      </div>
+
+                      {/* ── Intelligence Center ── */}
+                      {activeTab === 'repo' && (
+                        <>
+                      <div className="intelligence-center">
                     
                     <div className="ic-card">
                       <div className="ic-header">
@@ -1071,14 +1152,61 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                     </div>
                   )}
 
+                  {/* ── Setup Guide ── */}
+                  <div className="setup-documentation-wrapper" style={{ marginTop: '30px' }}>
+                    <div className="setup-header">
+                      <h3>📚 Quick Setup Guide</h3>
+                      <p>To integrate your local repository with this NEXUS-X workspace and unlock structural code intelligence, follow the steps below.</p>
+                    </div>
+                    <div className="doc-grid">
+                      <div className="doc-card">
+                        <div className="doc-step-badge">1</div>
+                        <h4>Link Local CLI</h4>
+                        <p>NEXUS-X uses a seamless local CLI agent. Link it locally since it's not on npm.</p>
+                        <div className="terminal-block">
+                          <div className="term-line"><span className="term-prompt">$</span> cd C:\nexus-X\cli && npm link</div>
+                        </div>
+                      </div>
+                      <div className="doc-card">
+                        <div className="doc-step-badge">2</div>
+                        <h4>Initialize &amp; Connect</h4>
+                        <p>Run the combined command inside your codebase to bootstrap the platform.</p>
+                        <div className="terminal-block">
+                          <div className="term-line term-line-interactive">
+                            <span><span className="term-prompt">$</span> nexus connect {BACKEND} {p.cloneCode}</span>
+                            <button className="clone-copy inline-copy" onClick={() => navigator.clipboard.writeText(`nexus connect ${BACKEND} ${p.cloneCode}`)} title="Copy">
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="doc-card full-span">
+                        <div className="doc-step-badge">3</div>
+                        <h4>Sync &amp; Analyze</h4>
+                        <p>Push your repository files and trigger the Code Intelligence Graph build.</p>
+                        <div className="terminal-block">
+                          <div className="term-line term-line-interactive">
+                            <span><span className="term-prompt">$</span> nexus push && nexus analyze</span>
+                            <button className="clone-copy inline-copy" onClick={() => navigator.clipboard.writeText(`nexus push && nexus analyze`)} title="Copy">
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  </>
+                  )}
+
                   {/* ── AI Incident Reports (Auto-Healer) ── */}
-                  <div className="incident-reports-main" style={{marginTop: '30px'}}>
-                    <div className="section-title">
-                      <h3>🚨 Production Incidents (Auto-Healer)</h3>
+                  {activeTab === 'agent' && (
+                  <div className="incident-reports-main" style={{ marginTop: '30px', background: '#0d1117', border: '1px solid #30363d', borderRadius: '8px', padding: '24px' }}>
+                    <div className="section-title" style={{ marginBottom: '16px', display: 'flex', alignItems: 'center' }}>
+                      <h3 style={{ margin: 0, fontSize: '18px' }}>🚨 Production Incidents (Auto-Healer)</h3>
                       <span className="badge" style={{background: incidents.length > 0 ? '#f85149' : '#238636'}}>{incidents.length}</span>
                     </div>
                     {incidents.length === 0 ? (
-                      <div className="empty-state">No production crashes detected. System is stable.</div>
+                      <div className="empty-state" style={{ background: 'transparent', border: '1px dashed #30363d' }}>No production crashes detected. System is stable.</div>
                     ) : (
                       <div className="incidents-list" style={{display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '16px'}}>
                         {incidents.map((inc, idx) => (
@@ -1108,11 +1236,13 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                       </div>
                     )}
                   </div>
+                  )}
 
                   {/* ── Functions Discovery (Middle Screen) ── */}
-                  <div className="functions-discovery-main" style={{marginTop: '30px'}}>
-                    <div className="section-title">
-                      <h3>🛠️ Discovered Functions</h3>
+                  {activeTab === 'functions' && (
+                  <div className="functions-discovery-main" style={{marginTop: '30px', background: '#0d1117', border: '1px solid #30363d', borderRadius: '8px', padding: '24px'}}>
+                    <div className="section-title" style={{ marginBottom: '16px', display: 'flex', alignItems: 'center' }}>
+                      <h3 style={{ margin: 0, fontSize: '18px' }}>🛠️ Discovered Functions</h3>
                       <span className="badge">{graphData?.nodes.filter((n: GraphNode) => n.data.type === 'Function').length || 0}</span>
                     </div>
                     
@@ -1177,60 +1307,79 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                       )}
                     </div>
                   </div>
+                  )}
 
-                  {/* ── File Tree from DB ── */}
-                  <FileTree
-                    data={treeData}
-                    loading={treeLoading}
-                    noPush={noPush}
-                    onFileClick={handleFileClick}
-                  />
-
-                  {/* ── Setup Guide ── */}
-                  <div className="setup-documentation-wrapper">
-                    <div className="setup-header">
-                      <h3>📚 Quick Setup Guide</h3>
-                      <p>To integrate your local repository with this NEXUS-X workspace and unlock structural code intelligence, follow the steps below.</p>
+                  {/* ── Live Production Telemetry ── */}
+                  {activeTab === 'server' && (
+                  <div style={{ marginTop: '30px' }}>
+                    {/* Setup Guide for Server Connection */}
+                    <div className="setup-documentation-wrapper" style={{ marginBottom: '24px' }}>
+                      <div className="setup-header">
+                        <h3>📡 Connect Your Production Server</h3>
+                        <p>Stream live logs from any running process directly into this dashboard. Nexus-X will automatically detect crashes and trigger the AI forensic pipeline.</p>
+                      </div>
+                      <div className="doc-grid">
+                        <div className="doc-card">
+                          <div className="doc-step-badge">1</div>
+                          <h4>Inject Monitoring (One-Time)</h4>
+                          <p>Run <code style={{color: '#58a6ff'}}>nexus inject</code> in your project. It rewrites <code style={{color: '#58a6ff'}}>package.json</code> so <code style={{color: '#58a6ff'}}>npm start</code> automatically streams logs to Nexus-X.</p>
+                          <div className="terminal-block">
+                            <div className="term-line term-line-interactive">
+                              <span><span className="term-prompt">$</span> cd /path/to/your-project</span>
+                            </div>
+                            <div className="term-line term-line-interactive">
+                              <span><span className="term-prompt">$</span> nexus inject</span>
+                              <button className="clone-copy inline-copy" onClick={() => navigator.clipboard.writeText('nexus inject')} title="Copy">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                              </button>
+                            </div>
+                          </div>
+                          <p style={{fontSize: '11px', color: '#8b949e', marginTop: '8px'}}>This modifies <code>scripts.start</code> → <code>nexus attach {'<original>'}</code>. To undo: <code>nexus eject</code></p>
+                        </div>
+                        <div className="doc-card">
+                          <div className="doc-step-badge">2</div>
+                          <h4>Deploy Normally</h4>
+                          <p>Now just run your app like you always do. Nexus-X monitoring is baked in.</p>
+                          <div className="terminal-block">
+                            <div className="term-line term-line-interactive">
+                              <span><span className="term-prompt">$</span> npm start</span>
+                              <button className="clone-copy inline-copy" onClick={() => navigator.clipboard.writeText('npm start')} title="Copy">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                              </button>
+                            </div>
+                          </div>
+                          <p style={{fontSize: '11px', color: '#8b949e', marginTop: '8px'}}>All stdout/stderr will stream live to this terminal. Crashes auto-trigger the AI forensic pipeline.</p>
+                        </div>
+                        <div className="doc-card full-span">
+                          <div className="doc-step-badge">⌥</div>
+                          <h4>Manual Alternative</h4>
+                          <p>If you don't want to modify <code style={{color: '#58a6ff'}}>package.json</code>, wrap any command manually:</p>
+                          <div className="terminal-block">
+                            <div className="term-line term-line-interactive">
+                              <span><span className="term-prompt">$</span> nexus attach node server.js</span>
+                              <button className="clone-copy inline-copy" onClick={() => navigator.clipboard.writeText('nexus attach node server.js')} title="Copy">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                    <div className="doc-grid">
-                      <div className="doc-card">
-                        <div className="doc-step-badge">1</div>
-                        <h4>Install Global CLI</h4>
-                        <p>NEXUS-X uses a seamless local CLI agent to parse your graph.</p>
-                        <div className="terminal-block">
-                          <div className="term-line"><span className="term-prompt">$</span> npm i -g nexus-x-cli</div>
-                        </div>
+
+                    {/* Live Terminal */}
+                    <div className="production-telemetry" style={{ background: '#0d1117', border: '1px solid #30363d', borderRadius: '8px', padding: '24px' }}>
+                      <div className="section-title" style={{ marginBottom: '16px', display: 'flex', alignItems: 'center' }}>
+                        <h3 style={{ margin: 0, fontSize: '18px' }}>📡 Live Server Telemetry</h3>
                       </div>
-                      <div className="doc-card">
-                        <div className="doc-step-badge">2</div>
-                        <h4>Initialize &amp; Connect</h4>
-                        <p>Run the combined command inside your codebase to bootstrap the platform.</p>
-                        <div className="terminal-block">
-                          <div className="term-line term-line-interactive">
-                            <span><span className="term-prompt">$</span> nexus connect {BACKEND} {p.cloneCode}</span>
-                            <button className="clone-copy inline-copy" onClick={() => navigator.clipboard.writeText(`nexus connect ${BACKEND} ${p.cloneCode}`)} title="Copy">
-                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="doc-card full-span">
-                        <div className="doc-step-badge">3</div>
-                        <h4>Sync &amp; Analyze</h4>
-                        <p>Push your repository files and trigger the Code Intelligence Graph build.</p>
-                        <div className="terminal-block">
-                          <div className="term-line term-line-interactive">
-                            <span><span className="term-prompt">$</span> nexus push && nexus analyze</span>
-                            <button className="clone-copy inline-copy" onClick={() => navigator.clipboard.writeText(`nexus push && nexus analyze`)} title="Copy">
-                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                            </button>
-                          </div>
-                        </div>
+                      <div style={{ height: '400px', width: '100%', border: '1px solid #30363d', borderRadius: '8px', overflow: 'hidden', background: '#010409' }}>
+                        <LiveTerminal workspace={p.cloneCode.split('/')[0]} project={p.cloneCode.split('/')[1]} />
                       </div>
                     </div>
                   </div>
+                  )}
 
                   {/* ── Team Members ── */}
+                  {activeTab === 'team' && (
                   <div className="proj-members-section">
                     <div className="section-title">
                       <h3>Team Members</h3>
@@ -1267,6 +1416,17 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                       )}
                     </div>
                   </div>
+                  )}
+
+                  </>
+                  )}
+                  <FileTree
+                    data={treeData}
+                    loading={treeLoading}
+                    noPush={noPush}
+                    onFileClick={handleFileClick}
+                  />
+
                 </div>
               );
             })()
