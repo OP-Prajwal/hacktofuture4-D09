@@ -124,6 +124,49 @@ const getLanguage = (filename: string) => {
   }
 };
 
+const buildIncidentMarkdown = (data: IncidentDetail): string => {
+  let md = `# 🚨 AI Forensic Report: ${data.incident_id}\n\n`;
+  md += `**Time:** ${new Date(data.created_at).toLocaleString()}\n`;
+  md += `**Status:** ${data.status}\n`;
+  md += `**Exit Code:** ${data.exit_code}\n\n`;
+  md += `## 📝 Summary\n${data.summary}\n\n`;
+
+  if (data.hypotheses && data.hypotheses.length > 0) {
+    md += `## 🧠 Hypotheses\n\n`;
+    data.hypotheses.forEach((h, i) => {
+      md += `### ${i + 1}. ${h.title} (Confidence: ${h.confidence}%)\n`;
+      if (h.evidence.length > 0) {
+        md += `**Evidence:**\n${h.evidence.map(e => `- ${e}`).join('\n')}\n\n`;
+      }
+      if (h.next_steps.length > 0) {
+        md += `**Next Steps:**\n${h.next_steps.map(s => `- ${s}`).join('\n')}\n\n`;
+      }
+    });
+  }
+
+  if (data.code_locations && data.code_locations.length > 0) {
+    md += `## 📍 Suspect Code Locations\n\n`;
+    data.code_locations.forEach((c) => {
+      md += `- **File:** \`${c.path}\` ${c.line_hint ? `(Line ${c.line_hint})` : ''}\n`;
+      if (c.rationale) md += `  *Rationale:* ${c.rationale}\n`;
+    });
+    md += '\n';
+  }
+
+  return md;
+};
+
+const downloadIncidentReport = (incident: IncidentDetail) => {
+  const md = buildIncidentMarkdown(incident);
+  const blob = new Blob([md], { type: 'text/markdown' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `incident-${incident.incident_id}.md`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
 const Dashboard = ({ session, onLogout }: DashboardProps) => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProject, setActiveProject] = useState<string | null>(localStorage.getItem(`activeProject_${session.workspace}`));
@@ -1397,9 +1440,9 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                                 <button
                                   className="btn-dash-primary"
                                   onClick={async () => {
-                                    if (!activeProjectData) return;
-                                    const [ws, pn] = activeProjectData.cloneCode.split('/');
-                                    const res = await fetch(`${BACKEND}/api/repo/${ws}/${pn}/incidents/${incidents[0].incident_id}`);
+                                    if (!activeProjectData || incidents.length === 0) return;
+                                    const latest = incidents[0];
+                                    const res = await fetch(`${BACKEND}/api/repo/${latest.workspace}/${latest.project}/incidents/${latest.incident_id}`);
                                     if (res.ok) {
                                       const data = await res.json();
                                       setViewingIncident({
@@ -1433,8 +1476,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                                   <button className="btn-dash-primary" onClick={async () => {
                                     try {
                                       if (!activeProjectData) return;
-                                      const [ws, pn] = activeProjectData.cloneCode.split('/');
-                                      const res = await fetch(`${BACKEND}/api/repo/${ws}/${pn}/incidents/${inc.incident_id}`);
+                                      const res = await fetch(`${BACKEND}/api/repo/${inc.workspace}/${inc.project}/incidents/${inc.incident_id}`);
                                       if (res.ok) {
                                         const data = await res.json();
                                         setViewingIncident({
