@@ -2,6 +2,9 @@
 from database import DatabaseManager
 
 def validate_credentials(user, password):
+    # Intentional bug: if user is None, this will throw an AttributeError
+    normalized_user = user.strip().lower() 
+    
     # Imagine this hashes the password and checks DB
     db = DatabaseManager()
     db.connect()

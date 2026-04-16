@@ -15,14 +15,14 @@ def collect_observability_context(
     }
 
 
-def collect_slack_context(
+def collect_servicenow_context(
     state: OrchestratorState,
     registry: ConnectorRegistry,
 ) -> OrchestratorState:
     incident = state["incident"]
     search_terms = state.get("search_terms", [])
     return {
-        "slack_hits": registry.lookup_by_kind("slack", incident, search_terms)
+        "servicenow_hits": registry.lookup_by_kind("servicenow", incident, search_terms)
     }
 
 
@@ -51,7 +51,7 @@ def collect_docs_context(
 def merge_external_context(state: OrchestratorState) -> OrchestratorState:
     combined = []
     combined.extend(state.get("observability_hits", []))
-    combined.extend(state.get("slack_hits", []))
+    combined.extend(state.get("servicenow_hits", []))
     combined.extend(state.get("tracker_hits", []))
     combined.extend(state.get("docs_hits", []))
     combined.sort(key=lambda item: item.confidence, reverse=True)

@@ -31,9 +31,9 @@ class OrchestratorLLM:
 
     def __init__(self, settings: LLMSettings | None = None):
         self.settings = settings or LLMSettings(
-            provider=os.getenv("NEXUS_LLM_PROVIDER", "disabled"),
-            model=os.getenv("NEXUS_LLM_MODEL", "disabled"),
-            base_url=os.getenv("NEXUS_LLM_BASE_URL"),
+            provider=os.getenv("NEXUS_LLM_PROVIDER", "ollama"),
+            model=os.getenv("NEXUS_LLM_MODEL", "qwen2.5-coder"),
+            base_url=os.getenv("NEXUS_LLM_BASE_URL", "http://localhost:11434"),
         )
         self._client: BaseChatModel | None = None
 
@@ -98,8 +98,9 @@ class OrchestratorLLM:
             SystemMessage(
                 content=(
                     "You are an incident-analysis model. Return JSON only. "
-                    "Produce up to 5 ranked root-cause hypotheses. Each hypothesis must have "
-                    "title, confidence, evidence, likely_locations, next_steps."
+                    "Produce exactly 4 ranked root-cause hypotheses. Each hypothesis MUST have: "
+                    "title, confidence, detailed_breakdown, suggested_fix (Solution Design), "
+                    "evidence, likely_locations, and next_steps."
                 )
             ),
             HumanMessage(content=json.dumps(payload)),
@@ -271,6 +272,16 @@ class OrchestratorLLM:
                         f"Localization rationale: {top.rationale}",
                         f"Observed error: {incident.error_summary}",
                     ],
+                    detailed_breakdown=(
+                        f"The error likely originates in `{top.path}`. The localization system identified this "
+                        f"area with `{top.confidence:.2f}` confidence because: {top.rationale}. The observed "
+                        f"error '{incident.error_summary}' suggests a logic failure in this component."
+                    ),
+                    suggested_fix=(
+                        "Inspect the localized function for missing boundary checks or incorrect "
+                        "state handling. If this area was recently deployed, consider a revert or "
+                        "applying a patch to handle the specific input causing the crash."
+                    ),
                     likely_locations=[top.path],
                     next_steps=[
                         "Inspect the surrounding function and recent edits in this file.",
@@ -291,6 +302,15 @@ class OrchestratorLLM:
                         f"Historical source: {top_hist.source}",
                         f"Historical summary: {top_hist.summary[:180]}",
                     ],
+                    detailed_breakdown=(
+                        f"This incident strongly resembles historical case '{top_hist.title}'. "
+                        "The pattern of failure suggests a recurring issue in the application's "
+                        "integration or state management layer."
+                    ),
+                    suggested_fix=(
+                        f"Apply the resolution found in the historical incident: {top_hist.resolution or 'No resolution recorded'}. "
+                        "Verify if the same conditions (config, input) are present in the current failure."
+                    ),
                     likely_locations=[loc.path for loc in locations[:3]],
                     next_steps=[
                         "Compare the current logs and configuration against the previous incident.",
@@ -308,10 +328,20 @@ class OrchestratorLLM:
                         "No repository match was found from the current stack trace and log terms.",
                         "No historical incident match was found in configured knowledge connectors.",
                     ],
+                    detailed_breakdown=(
+                        "There is currently insufficient evidence to pinpoint the exact root cause. "
+                        "The system was unable to correlate the error with specific code locations or "
+                        "past incidents."
+                    ),
+                    suggested_fix=(
+                        "Enhance observability by adding more logs around the suspected failure path. "
+                        "Manually inspect the stack trace and verify if all project graphs are indexed "
+                        "and reachable by the orchestrator."
+                    ),
                     likely_locations=[],
                     next_steps=[
                         "Add deploy metadata and recent diffs to the incident payload.",
-                        "Verify that the configured Neo4j project scope contains the expected code graph.",
+                        "Verify that the configured Nexus-X API URL containing the expected code graph is reachable.",
                         "Integrate observability MCP sources for traces and error group metadata.",
                     ],
                 )

@@ -2,7 +2,7 @@ from .adapters import (
     DocsRunbookMCPConnector,
     IncidentTrackerMCPConnector,
     ObservabilityMCPConnector,
-    SlackMCPConnector,
+    ServiceNowMCPConnector,
 )
 from .base import ExternalKnowledgeConnector
 from .memory import StaticIncidentMemoryConnector
@@ -18,6 +18,6 @@ __all__ = [
     "MCPQuery",
     "MCPRecord",
     "ObservabilityMCPConnector",
-    "SlackMCPConnector",
+    "ServiceNowMCPConnector",
     "StaticIncidentMemoryConnector",
 ]

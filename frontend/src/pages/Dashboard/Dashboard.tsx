@@ -113,6 +113,8 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
   const [treeData, setTreeData] = useState<TreeData | null>(null);
   const [treeLoading, setTreeLoading] = useState(false);
   const [noPush, setNoPush] = useState(false);
+  const [incidents, setIncidents] = useState<any[]>([]);
+  const [viewingIncident, setViewingIncident] = useState<any>(null);
 
   // File Viewer state
   const [viewingFile, setViewingFile] = useState<{ node: FileNode, content: string | null, loading: boolean } | null>(null);
@@ -206,6 +208,10 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
       const res = await fetch(`${BACKEND}/api/workspaces/${session.workspace}/projects`, {
         headers: { 'Authorization': `Bearer ${session.token}` }
       });
+      if (res.status === 401 || res.status === 403) {
+        onLogout();
+        return;
+      }
       if (res.ok) {
         const data = await res.json();
         setProjects(data);
@@ -412,6 +418,36 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
       setQuerying(false);
     }
   };
+
+  useEffect(() => {
+    let incidentInterval: number;
+    
+    if (activeProject && session) {
+      const p = projects.find(x => x.id === activeProject);
+      if (p) {
+        const [ws, pn] = p.cloneCode.split('/');
+        
+        const fetchIncidents = async () => {
+          try {
+            const res = await fetch(`${BACKEND}/api/repo/${ws}/${pn}/incidents`);
+            if (res.ok) {
+              const data = await res.json();
+              setIncidents(data.incidents || []);
+            }
+          } catch (e) {
+            console.error("Failed to fetch incidents", e);
+          }
+        };
+        
+        fetchIncidents();
+        incidentInterval = window.setInterval(fetchIncidents, 5000);
+      }
+    }
+    
+    return () => {
+      if (incidentInterval) window.clearInterval(incidentInterval);
+    };
+  }, [activeProject, session, projects]);
 
   const handleBlastRadius = async () => {
     const files = blastFiles.split(',').map(f => f.trim()).filter(Boolean);
@@ -837,10 +873,10 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                 <p style={{ fontSize: '12px', color: 'var(--text2)', marginBottom: '12px' }}>Run this in your local repository to initialize, connect, and analyze the graph in one go.</p>
                 <div className="clone-cmd" style={{ background: 'rgba(88, 166, 255, 0.05)', borderColor: 'rgba(88, 166, 255, 0.2)' }}>
                   <code style={{ fontSize: '12px', color: '#a5d6ff' }}>
-                    nexus init && nexus remote {createdProject.cloneCode} && nexus push && nexus analyze
+                    nexus connect {BACKEND} {createdProject.cloneCode} && nexus push && nexus analyze
                   </code>
                   <button className="clone-copy" onClick={() => {
-                    navigator.clipboard.writeText(`nexus init && nexus remote ${createdProject.cloneCode} && nexus push && nexus analyze`);
+                    navigator.clipboard.writeText(`nexus connect ${BACKEND} ${createdProject.cloneCode} && nexus push && nexus analyze`);
                   }}>
                     COPY
                   </button>
@@ -1035,6 +1071,44 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                     </div>
                   )}
 
+                  {/* ── AI Incident Reports (Auto-Healer) ── */}
+                  <div className="incident-reports-main" style={{marginTop: '30px'}}>
+                    <div className="section-title">
+                      <h3>🚨 Production Incidents (Auto-Healer)</h3>
+                      <span className="badge" style={{background: incidents.length > 0 ? '#f85149' : '#238636'}}>{incidents.length}</span>
+                    </div>
+                    {incidents.length === 0 ? (
+                      <div className="empty-state">No production crashes detected. System is stable.</div>
+                    ) : (
+                      <div className="incidents-list" style={{display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '16px'}}>
+                        {incidents.map((inc, idx) => (
+                          <div key={idx} className="ic-card" style={{padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                            <div>
+                              <div style={{display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px'}}>
+                                <span style={{
+                                  background: 'rgba(248,81,73,0.1)', color: '#f85149', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold'
+                                }}>EXIT {inc.exit_code}</span>
+                                <strong style={{color: '#e6edf3', fontSize: '14px'}}>{inc.incident_id}</strong>
+                                <span style={{color: '#8b949e', fontSize: '12px'}}>• {new Date(inc.created_at).toLocaleString()}</span>
+                              </div>
+                              <div style={{color: '#8b949e', fontSize: '12px'}}>{inc.summary}</div>
+                            </div>
+                            <button className="btn-dash-primary" onClick={async () => {
+                              try {
+                                const [ws, pn] = p.cloneCode.split('/');
+                                const res = await fetch(`${BACKEND}/api/repo/${ws}/${pn}/incidents/${inc.incident_id}`);
+                                if (res.ok) {
+                                  const data = await res.json();
+                                  setViewingIncident(data);
+                                }
+                              } catch (e) {}
+                            }}>View AI Report</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                   {/* ── Functions Discovery (Middle Screen) ── */}
                   <div className="functions-discovery-main" style={{marginTop: '30px'}}>
                     <div className="section-title">
@@ -1133,8 +1207,8 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                         <p>Run the combined command inside your codebase to bootstrap the platform.</p>
                         <div className="terminal-block">
                           <div className="term-line term-line-interactive">
-                            <span><span className="term-prompt">$</span> nexus init && nexus remote {p.cloneCode}</span>
-                            <button className="clone-copy inline-copy" onClick={() => navigator.clipboard.writeText(`nexus init && nexus remote ${p.cloneCode}`)} title="Copy">
+                            <span><span className="term-prompt">$</span> nexus connect {BACKEND} {p.cloneCode}</span>
+                            <button className="clone-copy inline-copy" onClick={() => navigator.clipboard.writeText(`nexus connect ${BACKEND} ${p.cloneCode}`)} title="Copy">
                               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                             </button>
                           </div>
@@ -1230,6 +1304,28 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                   {viewingFile.content || ''}
                 </SyntaxHighlighter>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Incident Report Modal ── */}
+      {viewingIncident && (
+        <div className="file-viewer-modal">
+          <div className="fvm-content" style={{ maxWidth: '800px' }}>
+            <div className="fvm-header" style={{ borderBottom: '1px solid #f85149', background: 'rgba(248,81,73,0.05)' }}>
+              <span className="fvm-title" style={{ color: '#f85149' }}>🚨 AI Forensic Report: {viewingIncident.incident_id}</span>
+              <button className="fvm-close" onClick={() => setViewingIncident(null)}>✕</button>
+            </div>
+            <div className="fvm-body" style={{ padding: '24px', background: '#0d1117' }}>
+              <SyntaxHighlighter
+                language="markdown"
+                style={vscDarkPlus}
+                customStyle={{ margin: 0, padding: 0, background: 'transparent', fontSize: '14px' }}
+                wrapLines={true}
+              >
+                {viewingIncident.report_markdown || 'No markdown generated.'}
+              </SyntaxHighlighter>
             </div>
           </div>
         </div>

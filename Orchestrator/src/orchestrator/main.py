@@ -17,7 +17,7 @@ def main() -> None:
     run_parser = subparsers.add_parser("run", help="Run incident analysis")
     run_parser.add_argument("incident_file", type=Path, help="Path to incident JSON")
     run_parser.add_argument("--repo-root", type=Path, default=None, help="Repository root to inspect")
-    run_parser.add_argument("--graph-project", default=None, help="Override Neo4j project scope. Defaults to repo_root/.nexus/config.json remote")
+    run_parser.add_argument("--graph-project", default=None, help="Override Nexus Code Graph project scope. Defaults to repo_root/.nexus/config.json remote")
     run_parser.add_argument("--memory-dir", type=Path, default=None, help="Directory of historical incidents")
     run_parser.add_argument("--output-dir", type=Path, default=Path("reports"), help="Report output directory")
     run_parser.add_argument("--mcp-config", type=Path, default=None, help="Path to MCP server configuration JSON")
@@ -27,7 +27,7 @@ def main() -> None:
 
     doctor_parser = subparsers.add_parser("doctor", help="Validate orchestrator dependencies and graph scope")
     doctor_parser.add_argument("--repo-root", type=Path, default=None, help="Repository root to inspect")
-    doctor_parser.add_argument("--graph-project", default=None, help="Override Neo4j project scope. Defaults to repo_root/.nexus/config.json remote")
+    doctor_parser.add_argument("--graph-project", default=None, help="Override Nexus Code Graph project scope. Defaults to repo_root/.nexus/config.json remote")
 
     args = parser.parse_args()
 
@@ -56,7 +56,7 @@ def main() -> None:
             output_dir=args.output_dir,
             llm=llm,
         )
-        result = app.invoke({"incident": incident})
+        result = app.invoke({"incident": incident, "repo_root": args.repo_root})
         print(f"Report written to {result['report_path']}")
     elif args.command == "doctor":
         locator = RepositoryLocator(args.repo_root, graph_project=args.graph_project)

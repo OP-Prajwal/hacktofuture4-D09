@@ -33,9 +33,9 @@ class MCPBackedConnector(ExternalKnowledgeConnector):
         ]
 
 
-class SlackMCPConnector(MCPBackedConnector):
-    name = "slack"
-    kind = "slack"
+class ServiceNowMCPConnector(MCPBackedConnector):
+    name = "servicenow"
+    kind = "servicenow"
 
 
 class IncidentTrackerMCPConnector(MCPBackedConnector):

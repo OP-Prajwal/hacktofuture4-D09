@@ -9,7 +9,8 @@ def localize_code(state: OrchestratorState, locator: RepositoryLocator) -> Orche
     incident = state["incident"]
     search_terms = state.get("search_terms", [])
     candidate_locations = locator.locate(incident, search_terms)
-    return {"candidate_locations": candidate_locations}
+    # also expose under 'locations' so the reporter can find it without aliasing
+    return {"candidate_locations": candidate_locations, "locations": candidate_locations}
 
 
 def rank_hypotheses(state: OrchestratorState, llm: OrchestratorLLM) -> OrchestratorState:

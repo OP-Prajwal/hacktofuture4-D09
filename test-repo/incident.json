@@ -1,0 +1,20 @@
+{
+  "id": "inc-398731",
+  "title": "CI/CD Deployment Failure in Test Suite",
+  "service": "test-repo",
+  "environment": "ci-pipeline",
+  "error_summary": "AttributeError: 'NoneType' object has no attribute 'strip'",
+  "stack_trace": "",
+  "logs": [
+    "\ufeffRunning CI Test Suite...",
+    "Connecting to DB...",
+    "Executing: SELECT id FROM users WHERE user='admin' AND pass='admin123'",
+    "? login_user() success path",
+    "Running service account test...",
+    "FAILED!",
+    "=============================",
+    "E   AttributeError: 'NoneType' object has no attribute 'strip'",
+    "=============================",
+    ""
+  ]
+}
