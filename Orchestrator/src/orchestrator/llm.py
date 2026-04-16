@@ -175,6 +175,8 @@ class OrchestratorLLM:
                     model=self.settings.model,
                     temperature=self.settings.temperature,
                     base_url=self.settings.base_url or "http://localhost:11434",
+                    num_ctx=4096,
+                    timeout=300.0,
                 )
             except Exception:
                 return None

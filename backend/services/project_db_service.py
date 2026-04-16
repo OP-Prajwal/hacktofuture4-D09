@@ -1,11 +1,15 @@
 from db.mongo import mongo
 from datetime import datetime
+import re
 import uuid
 
 def create_project(workspace_slug: str, name: str, description: str):
     projects = mongo.get_collection("projects")
-    project_id = str(uuid.uuid4())[:8] # short id
-    clone_code = f"{workspace_slug}/{name.lower().replace(' ', '-')}-{project_id}"
+    project_id = str(uuid.uuid4())[:8]  # internal DB record ID only
+    # slug is cleaned project name
+    slug = re.sub(r'[^a-z0-9-]', '-', name.lower().strip()).strip('-')
+    # Revert to old approach: workspace/slug-id
+    clone_code = f"{workspace_slug}/{slug}-{project_id}"
     
     project_doc = {
         "id": project_id,

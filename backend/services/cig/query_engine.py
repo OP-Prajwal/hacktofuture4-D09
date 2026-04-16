@@ -241,7 +241,7 @@ def ask_repository(workspace: str, project_name: str, question: str) -> dict:
                 "model": "qwen2.5-coder:3b",
                 "prompt": prompt,
                 "stream": False
-            }, timeout=30.0)
+            }, timeout=300.0)
             answer = response.json().get("response", "").strip()
         except Exception as e:
             answer = f"Error reaching local LLM: {e}"

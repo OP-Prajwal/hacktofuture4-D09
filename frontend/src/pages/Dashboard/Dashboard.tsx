@@ -166,6 +166,9 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
 
+  // Tab state
+  const [activeTab, setActiveTab] = useState<'repo' | 'agent' | 'functions' | 'server' | 'team'>('repo');
+
   // Blast Radius state
   const [blastFiles, setBlastFiles] = useState('');
   const [blastResult, setBlastResult] = useState<Record<string, unknown> | null>(null);
@@ -1025,17 +1028,22 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                 <p style={{ marginTop: '8px' }}>Your environment for <strong>{createdProject.name}</strong> is ready.</p>
               </div>
 
-              <div className="clone-box" style={{ background: '#000', border: '1px solid var(--accent2)' }}>
-                <div className="clone-label" style={{ color: 'var(--accent2)' }}>🚀 CONNECT COMMAND</div>
-                <p style={{ fontSize: '12px', color: 'var(--text2)', marginBottom: '12px' }}>Run this in your local repository to initialize, connect, and analyze the graph in one go.</p>
-                <div className="clone-cmd" style={{ background: 'rgba(88, 166, 255, 0.05)', borderColor: 'rgba(88, 166, 255, 0.2)' }}>
-                  <code style={{ fontSize: '12px', color: '#a5d6ff' }}>
-                    nexus connect {BACKEND} {createdProject.cloneCode} && nexus push && nexus analyze
-                  </code>
-                  <button className="clone-copy" onClick={() => {
-                    navigator.clipboard.writeText(`nexus connect ${BACKEND} ${createdProject.cloneCode} && nexus push && nexus analyze`);
+              <div className="clone-box" style={{ background: '#0d1117', border: '1px solid #30363d', borderRadius: '6px', textAlign: 'left', padding: '16px' }}>
+                <p style={{ fontSize: '13px', color: '#8b949e', marginBottom: '8px', fontWeight: 600 }}>…or connect an existing repository from the command line</p>
+                <div className="clone-cmd" style={{ background: '#010409', border: '1px solid #30363d', borderRadius: '6px', display: 'flex', alignItems: 'flex-start' }}>
+                  <pre style={{ margin: 0, padding: '16px', fontSize: '12px', color: '#e6edf3', fontFamily: 'monospace', lineHeight: '1.6', overflowX: 'auto', flex: 1 }}>
+                    <span style={{color: '#8b949e'}}># Link the local CLI (package not published to npm yet)</span>{'\n'}
+                    cd C:\nexus-X\cli && npm link{'\n\n'}
+                    <span style={{color: '#8b949e'}}># Initialize and connect the repository</span>{'\n'}
+                    nexus connect {BACKEND} {createdProject.cloneCode}{'\n\n'}
+                    <span style={{color: '#8b949e'}}># Push codebase to the platform and analyze it</span>{'\n'}
+                    nexus push{'\n'}
+                    nexus analyze
+                  </pre>
+                  <button className="clone-copy" style={{ margin: '8px' }} onClick={() => {
+                    navigator.clipboard.writeText(`cd C:\\nexus-X\\cli && npm link\nnexus connect ${BACKEND} ${createdProject.cloneCode}\nnexus push\nnexus analyze`);
                   }}>
-                    COPY
+                    <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z"></path><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"></path></svg>
                   </button>
                 </div>
               </div>
@@ -1095,392 +1103,540 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                     <p>{p.description || '// no description provided'}</p>
                   </div>
 
-                  {/* ── Intelligence Center ── */}
-                  <div className="intelligence-center">
-                    <div className="section-title">
-                      <h3>🧠 Intelligence Layer</h3>
+                  {treeLoading ? (
+                    <div className="empty-dashboard" style={{ marginTop: '40px' }}>
+                      <div className="loading-spinner-container">
+                        <div className="nexus-spinner"></div>
+                        <p>Scanning repository state...</p>
+                      </div>
                     </div>
+                  ) : noPush || !treeData ? (
+                    <div className="empty-dashboard" style={{ marginTop: '40px', padding: '60px 20px' }}>
+                      <div className="clone-box" style={{ background: '#000', border: '1px solid var(--accent2)', maxWidth: '600px', margin: '0 auto', textAlign: 'left' }}>
+                        <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+                          <div style={{ width: '48px', height: '48px', background: 'rgba(88, 166, 255, 0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent2)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+                          </div>
+                          <h3 style={{ margin: 0, color: 'var(--text)' }}>Waiting for first code push...</h3>
+                          <p style={{ marginTop: '8px', color: 'var(--text2)', fontSize: '14px' }}>Connect your local code to this workspace to unlock AI CI/CD and Graph Intelligence.</p>
+                        </div>
+                        
+                        <div className="clone-label" style={{ color: 'var(--accent2)' }}>1. LINK LOCAL CLI</div>
+                        <p style={{ fontSize: '12px', color: 'var(--text2)', marginBottom: '8px' }}>The package is not on npm yet. Link the local CLI directory.</p>
+                        <div className="clone-cmd" style={{ background: 'rgba(88, 166, 255, 0.05)', borderColor: 'rgba(88, 166, 255, 0.2)', marginBottom: '16px' }}>
+                          <code style={{ fontSize: '12px', color: '#a5d6ff' }}>cd C:\nexus-X\cli && npm link</code>
+                        </div>
 
-                    <div className="ic-card">
-                      <div className="ic-header">
-                        <div>
-                          <h4>Structural Analysis</h4>
-                          <p>Analyze your repository to build a comprehensive knowledge graph of functions and dependencies.</p>
+                        <div className="clone-label" style={{ color: 'var(--accent2)' }}>2. CONNECT & INITIALIZE</div>
+                        <div className="clone-cmd" style={{ background: 'rgba(88, 166, 255, 0.05)', borderColor: 'rgba(88, 166, 255, 0.2)', marginBottom: '16px' }}>
+                          <code style={{ fontSize: '12px', color: '#a5d6ff' }}>
+                            nexus connect {BACKEND} {p.cloneCode}
+                          </code>
+                          <button className="clone-copy" onClick={() => navigator.clipboard.writeText(`nexus connect ${BACKEND} ${p.cloneCode}`)}>COPY</button>
                         </div>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <button className="btn-dash-primary" onClick={handleAnalyze} disabled={analyzing}>
-                            {analyzing ? `Analyzing... ${analyzeProgress}%` : ((graphData?.nodes?.length || 0) > 0 ? 'Sync Updated Graph' : 'Create Graph')}
-                          </button>
-                          {(graphData?.nodes?.length || 0) > 0 && (
-                            <button
-                              className="btn-dash-secondary"
-                              onClick={() => setFullScreenGraph(true)}
-                              style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
-                            >
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                                <circle cx="12" cy="12" r="3" />
-                              </svg>
-                              View Graph
-                            </button>
-                          )}
+
+                        <div className="clone-label" style={{ color: 'var(--accent2)' }}>3. PUSH & ANALYZE</div>
+                        <div className="clone-cmd" style={{ background: 'rgba(88, 166, 255, 0.05)', borderColor: 'rgba(88, 166, 255, 0.2)' }}>
+                          <code style={{ fontSize: '12px', color: '#a5d6ff' }}>
+                            nexus push && nexus analyze
+                          </code>
+                          <button className="clone-copy" onClick={() => navigator.clipboard.writeText(`nexus push && nexus analyze`)}>COPY</button>
                         </div>
-                        {analyzing && (
-                          <div style={{ width: '100%', marginTop: '12px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#8b949e', marginBottom: '6px' }}>
-                              <span>{analyzeStep}</span>
-                              <span>{analyzeProgress}%</span>
+                        
+                        <div style={{ textAlign: 'center', marginTop: '24px' }}>
+                          <button className="btn-dash-primary" onClick={() => fetchTree(p.cloneCode)}>Refresh</button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {/* ── Metric Cards ── */}
+                      <div className="metrics-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px', marginBottom: '30px' }}>
+                        <div className="metric-card" onClick={() => setActiveTab('repo')} style={{ cursor: 'pointer', background: '#0d1117', border: activeTab === 'repo' ? '1px solid #58a6ff' : '1px solid #30363d', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '12px', color: activeTab === 'repo' ? '#58a6ff' : '#8b949e', fontWeight: 600 }}>REPOSITORY</span>
+                          <span style={{ fontSize: '20px', color: '#e6edf3', fontWeight: 'bold', marginTop: '8px' }}>Synced</span>
+                        </div>
+                        <div className="metric-card" onClick={() => setActiveTab('agent')} style={{ cursor: 'pointer', background: '#0d1117', border: activeTab === 'agent' ? '1px solid #58a6ff' : '1px solid #30363d', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '12px', color: activeTab === 'agent' ? '#58a6ff' : '#8b949e', fontWeight: 600 }}>AUTO-HEALER AGENT</span>
+                          <span style={{ fontSize: '20px', color: '#3fb950', fontWeight: 'bold', marginTop: '8px', display: 'center', alignItems: 'center', gap: '6px' }}><span style={{width: '8px', height: '8px', background: '#3fb950', borderRadius: '50%'}}></span>Active</span>
+                        </div>
+                        <div className="metric-card" onClick={() => setActiveTab('functions')} style={{ cursor: 'pointer', background: '#0d1117', border: activeTab === 'functions' ? '1px solid #58a6ff' : '1px solid #30363d', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '12px', color: activeTab === 'functions' ? '#58a6ff' : '#8b949e', fontWeight: 600 }}>FUNCTIONS</span>
+                          <span style={{ fontSize: '20px', color: '#e6edf3', fontWeight: 'bold', marginTop: '8px' }}>{(graphData?.nodes || []).filter((n: GraphNode) => n.data.type === 'Function').length}</span>
+                        </div>
+                        <div className="metric-card" onClick={() => setActiveTab('server')} style={{ cursor: 'pointer', background: '#0d1117', border: activeTab === 'server' ? '1px solid #f85149' : '1px solid #30363d', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '12px', color: activeTab === 'server' ? '#f85149' : '#8b949e', fontWeight: 600 }}>LIVE SERVER</span>
+                          <span style={{ fontSize: '20px', color: incidents.length > 0 ? '#f85149' : '#3fb950', fontWeight: 'bold', marginTop: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{width: '8px', height: '8px', background: incidents.length > 0 ? '#f85149' : '#3fb950', borderRadius: '50%'}}></span>
+                            {incidents.length > 0 ? 'Crash Detected' : 'Stable'}
+                          </span>
+                        </div>
+                        <div className="metric-card" onClick={() => setActiveTab('team')} style={{ cursor: 'pointer', background: '#0d1117', border: activeTab === 'team' ? '1px solid #58a6ff' : '1px solid #30363d', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '12px', color: activeTab === 'team' ? '#58a6ff' : '#8b949e', fontWeight: 600 }}>TEAM MEMBERS</span>
+                          <span style={{ fontSize: '20px', color: '#e6edf3', fontWeight: 'bold', marginTop: '8px' }}>{(p.members || []).length || 1}</span>
+                        </div>
+                      </div>
+
+                      {/* ── Tab Content ── */}
+                      {activeTab === 'repo' && (
+                        <>
+                        <div className="intelligence-center">
+                          <div className="ic-card">
+                            <div className="ic-header">
+                              <div>
+                                <h4>Structural Analysis</h4>
+                                <p>Analyze your repository to build a comprehensive knowledge graph of functions and dependencies.</p>
+                              </div>
+                              <div style={{ display: 'flex', gap: '8px' }}>
+                                <button className="btn-dash-primary" onClick={handleAnalyze} disabled={analyzing}>
+                                  {analyzing ? `Analyzing... ${analyzeProgress}%` : ((graphData?.nodes?.length || 0) > 0 ? 'Sync Updated Graph' : 'Create Graph')}
+                                </button>
+                                {(graphData?.nodes?.length || 0) > 0 && (
+                                  <button
+                                    className="btn-dash-secondary"
+                                    onClick={() => setFullScreenGraph(true)}
+                                    style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                                  >
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                      <circle cx="12" cy="12" r="3" />
+                                    </svg>
+                                    View Graph
+                                  </button>
+                                )}
+                              </div>
+                              {analyzing && (
+                                <div style={{ width: '100%', marginTop: '12px' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#8b949e', marginBottom: '6px' }}>
+                                    <span>{analyzeStep}</span>
+                                    <span>{analyzeProgress}%</span>
+                                  </div>
+                                  <div style={{ height: '4px', background: '#21262d', borderRadius: '4px', overflow: 'hidden' }}>
+                                    <div style={{ height: '100%', background: 'linear-gradient(90deg, #388bfd, #58a6ff)', width: `${analyzeProgress}%`, borderRadius: '4px', transition: 'width 0.5s ease' }} />
+                                  </div>
+                                </div>
+                              )}
                             </div>
-                            <div style={{ height: '4px', background: '#21262d', borderRadius: '4px', overflow: 'hidden' }}>
-                              <div style={{ height: '100%', background: 'linear-gradient(90deg, #388bfd, #58a6ff)', width: `${analyzeProgress}%`, borderRadius: '4px', transition: 'width 0.5s ease' }} />
+
+                            <div className="ic-query">
+                              <input
+                                type="text"
+                                className="dash-input"
+                                placeholder="Ask a question about the codebase..."
+                                value={queryText}
+                                onChange={e => setQueryText(e.target.value)}
+                                onKeyDown={e => e.key === 'Enter' && handleQuery()}
+                              />
+                              <button className="btn-dash-secondary ic-ask-btn" onClick={handleQuery} disabled={querying}>
+                                {querying ? 'Thinking...' : 'Ask AI'}
+                              </button>
                             </div>
+
+                            {queryResult && (
+                              <div className="ic-result">
+                                <div className="ic-answer">
+                                  <strong>AI Response</strong>
+                                  <p>{queryResult.answer}</p>
+                                </div>
+                                {queryResult.graph_context && (
+                                  <div className="ic-context">
+                                    <strong>Context extracted from graph</strong>
+                                    <div className="ic-pills">
+                                      {(queryResult.graph_context.nodes || []).map((n: GraphNode, i: number) => (
+                                        <span key={i} className="ic-pill">{n.name || n.data?.label}</span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* ── Blast Radius CI Acceleration ── */}
+                        {(graphData?.nodes?.length || 0) > 0 && (
+                          <div className="blast-radius-card" style={{ marginTop: '16px' }}>
+                            <h4>⚡ Blast Radius — CI Acceleration</h4>
+                            <p style={{ fontSize: '11px', color: '#8b949e', marginBottom: '12px' }}>
+                              Enter changed file names to calculate impact and skip unaffected tests.
+                            </p>
+                            <div className="blast-radius-input">
+                              <input
+                                type="text"
+                                className="dash-input"
+                                placeholder="e.g. auth.py, main.py"
+                                value={blastFiles}
+                                onChange={e => setBlastFiles(e.target.value)}
+                                onKeyDown={e => e.key === 'Enter' && handleBlastRadius()}
+                                style={{ flex: 1 }}
+                              />
+                              <button className="btn-dash-secondary" onClick={handleBlastRadius} disabled={blastLoading}>
+                                {blastLoading ? 'Analyzing...' : 'Calculate'}
+                              </button>
+                            </div>
+
+                            {blastResult && !blastResult.error && (
+                              <div className="blast-radius-result">
+                                <span className={`risk-badge ${(blastResult as Record<string, unknown>).risk_level}`}>
+                                  {(blastResult as Record<string, unknown>).risk_level as string} RISK
+                                </span>
+                                <div className="blast-files-grid">
+                                  <div className="blast-file-list">
+                                    <h5>🔴 Affected Files</h5>
+                                    {((blastResult as Record<string, unknown>).affected_files as string[] || []).map((f: string, i: number) => (
+                                      <div key={i} className="file-item affected">{f}</div>
+                                    ))}
+                                  </div>
+                                  <div className="blast-file-list">
+                                    <h5>🟢 Safe to Skip</h5>
+                                    {((blastResult as Record<string, unknown>).unaffected_files as string[] || []).map((f: string, i: number) => (
+                                      <div key={i} className="file-item safe">{f}</div>
+                                    ))}
+                                  </div>
+                                </div>
+                                <div className="blast-recommendation">
+                                  💡 {(blastResult as Record<string, unknown>).recommendation as string}
+                                </div>
+                              </div>
+                            )}
+
+                            {blastResult?.error && (
+                              <div style={{ color: '#f85149', fontSize: '12px', padding: '8px' }}>
+                                {blastResult.error as string}
+                              </div>
+                            )}
                           </div>
                         )}
-                      </div>
 
-                      <div className="ic-query">
-                        <input
-                          type="text"
-                          className="dash-input"
-                          placeholder="Ask a question about the codebase..."
-                          value={queryText}
-                          onChange={e => setQueryText(e.target.value)}
-                          onKeyDown={e => e.key === 'Enter' && handleQuery()}
-                        />
-                        <button className="btn-dash-secondary ic-ask-btn" onClick={handleQuery} disabled={querying}>
-                          {querying ? 'Thinking...' : 'Ask AI'}
-                        </button>
-                      </div>
-
-                      {queryResult && (
-                        <div className="ic-result">
-                          <div className="ic-answer">
-                            <strong>AI Response</strong>
-                            <p>{queryResult.answer}</p>
+                        {/* ── Setup Guide ── */}
+                        <div className="setup-documentation-wrapper" style={{ marginTop: '30px' }}>
+                          <div className="setup-header">
+                            <h3>📚 Quick Setup Guide</h3>
+                            <p>To integrate your local repository with this NEXUS-X workspace and unlock structural code intelligence, follow the steps below.</p>
                           </div>
-                          {queryResult.graph_context && (
-                            <div className="ic-context">
-                              <strong>Context extracted from graph</strong>
-                              <div className="ic-pills">
-                                {(queryResult.graph_context.nodes || []).map((n: GraphNode, i: number) => (
-                                  <span key={i} className="ic-pill">{n.name || n.data?.label}</span>
-                                ))}
+                          <div className="doc-grid">
+                            <div className="doc-card">
+                              <div className="doc-step-badge">1</div>
+                              <h4>Link Local CLI</h4>
+                              <p>NEXUS-X uses a seamless local CLI agent. Link it locally since it's not on npm.</p>
+                              <div className="terminal-block">
+                                <div className="term-line"><span className="term-prompt">$</span> cd C:\nexus-X\cli && npm link</div>
                               </div>
+                            </div>
+                            <div className="doc-card">
+                              <div className="doc-step-badge">2</div>
+                              <h4>Initialize &amp; Connect</h4>
+                              <p>Run the combined command inside your codebase to bootstrap the platform.</p>
+                              <div className="terminal-block">
+                                <div className="term-line term-line-interactive">
+                                  <span><span className="term-prompt">$</span> nexus connect {BACKEND} {p.cloneCode}</span>
+                                  <button className="clone-copy inline-copy" onClick={() => navigator.clipboard.writeText(`nexus connect ${BACKEND} ${p.cloneCode}`)} title="Copy">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="doc-card full-span">
+                              <div className="doc-step-badge">3</div>
+                              <h4>Sync &amp; Analyze</h4>
+                              <p>Push your repository files and trigger the Code Intelligence Graph build.</p>
+                              <div className="terminal-block">
+                                <div className="term-line term-line-interactive">
+                                  <span><span className="term-prompt">$</span> nexus push && nexus analyze</span>
+                                  <button className="clone-copy inline-copy" onClick={() => navigator.clipboard.writeText(`nexus push && nexus analyze`)} title="Copy">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        </>
+                      )}
+
+                      {/* ── AI Incident Reports (Auto-Healer) ── */}
+                      {activeTab === 'agent' && (
+                        <div className="incident-reports-main" style={{ marginTop: '30px', background: '#0d1117', border: '1px solid #30363d', borderRadius: '8px', padding: '24px' }}>
+                          <div className="section-title" style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <h3 style={{ margin: 0, fontSize: '18px' }}>🚨 Production Incidents (Auto-Healer)</h3>
+                              <span className="badge" style={{ background: incidents.length > 0 ? '#f85149' : '#238636' }}>{incidents.length}</span>
+                            </div>
+                            <button
+                              className="btn-dash-secondary"
+                              style={{ padding: '4px 12px', fontSize: '12px' }}
+                              onClick={() => activeProjectData && loadIncidents(activeProjectData.cloneCode)}
+                              disabled={!activeProjectData || incidentLoading}
+                            >
+                              {incidentLoading ? 'Refreshing...' : 'Refresh Incidents'}
+                            </button>
+                          </div>
+                          {incidentError && (
+                            <div style={{ color: '#f85149', fontSize: '12px', marginTop: '12px' }}>
+                              {incidentError}
+                            </div>
+                          )}
+                          {incidents.length > 0 && (
+                            <div
+                              className="ic-card"
+                              style={{
+                                marginTop: '16px',
+                                border: '1px solid rgba(248,81,73,0.35)',
+                                background: 'rgba(248,81,73,0.06)'
+                              }}
+                            >
+                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', alignItems: 'center' }}>
+                                <div>
+                                  <div style={{ color: '#f85149', fontWeight: 700, fontSize: '13px' }}>
+                                    Latest incident: {incidents[0].incident_id}
+                                  </div>
+                                  <div style={{ color: '#e6edf3', fontSize: '12px', marginTop: '4px' }}>
+                                    {incidents[0].summary}
+                                  </div>
+                                </div>
+                                <button
+                                  className="btn-dash-primary"
+                                  onClick={async () => {
+                                    if (!activeProjectData) return;
+                                    const [ws, pn] = activeProjectData.cloneCode.split('/');
+                                    const res = await fetch(`${BACKEND}/api/repo/${ws}/${pn}/incidents/${incidents[0].incident_id}`);
+                                    if (res.ok) {
+                                      const data = await res.json();
+                                      setViewingIncident({
+                                        ...data,
+                                        report_markdown: buildIncidentMarkdown(data),
+                                      });
+                                    }
+                                  }}
+                                >
+                                  Open Latest Report
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                          {incidents.length === 0 ? (
+                            <div className="empty-state" style={{ background: 'transparent', border: '1px dashed #30363d' }}>No production crashes detected. System is stable.</div>
+                          ) : (
+                            <div className="incidents-list" style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '16px' }}>
+                              {incidents.map((inc) => (
+                                <div key={inc.incident_id} className="ic-card" style={{ padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                                      <span style={{
+                                        background: 'rgba(248,81,73,0.1)', color: '#f85149', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold'
+                                      }}>EXIT {inc.exit_code}</span>
+                                      <strong style={{ color: '#e6edf3', fontSize: '14px' }}>{inc.incident_id}</strong>
+                                      <span style={{ color: '#8b949e', fontSize: '12px' }}>• {new Date(inc.created_at).toLocaleString()}</span>
+                                    </div>
+                                    <div style={{ color: '#8b949e', fontSize: '12px' }}>{inc.summary}</div>
+                                  </div>
+                                  <button className="btn-dash-primary" onClick={async () => {
+                                    try {
+                                      if (!activeProjectData) return;
+                                      const [ws, pn] = activeProjectData.cloneCode.split('/');
+                                      const res = await fetch(`${BACKEND}/api/repo/${ws}/${pn}/incidents/${inc.incident_id}`);
+                                      if (res.ok) {
+                                        const data = await res.json();
+                                        setViewingIncident({
+                                          ...data,
+                                          report_markdown: buildIncidentMarkdown(data),
+                                        });
+                                      }
+                                    } catch (e) { }
+                                  }}>View AI Report</button>
+                                </div>
+                              ))}
                             </div>
                           )}
                         </div>
                       )}
-                    </div>
-                  </div>
 
-                  {/* ── Blast Radius CI Acceleration ── */}
-                  {(graphData?.nodes?.length || 0) > 0 && (
-                    <div className="blast-radius-card" style={{ marginTop: '16px' }}>
-                      <h4>⚡ Blast Radius — CI Acceleration</h4>
-                      <p style={{ fontSize: '11px', color: '#8b949e', marginBottom: '12px' }}>
-                        Enter changed file names to calculate impact and skip unaffected tests.
-                      </p>
-                      <div className="blast-radius-input">
-                        <input
-                          type="text"
-                          className="dash-input"
-                          placeholder="e.g. auth.py, main.py"
-                          value={blastFiles}
-                          onChange={e => setBlastFiles(e.target.value)}
-                          onKeyDown={e => e.key === 'Enter' && handleBlastRadius()}
-                          style={{ flex: 1 }}
-                        />
-                        <button className="btn-dash-secondary" onClick={handleBlastRadius} disabled={blastLoading}>
-                          {blastLoading ? 'Analyzing...' : 'Calculate'}
-                        </button>
-                      </div>
-
-                      {blastResult && !blastResult.error && (
-                        <div className="blast-radius-result">
-                          <span className={`risk-badge ${(blastResult as Record<string, unknown>).risk_level}`}>
-                            {(blastResult as Record<string, unknown>).risk_level as string} RISK
-                          </span>
-                          <div className="blast-files-grid">
-                            <div className="blast-file-list">
-                              <h5>🔴 Affected Files</h5>
-                              {((blastResult as Record<string, unknown>).affected_files as string[] || []).map((f: string, i: number) => (
-                                <div key={i} className="file-item affected">{f}</div>
-                              ))}
-                            </div>
-                            <div className="blast-file-list">
-                              <h5>🟢 Safe to Skip</h5>
-                              {((blastResult as Record<string, unknown>).unaffected_files as string[] || []).map((f: string, i: number) => (
-                                <div key={i} className="file-item safe">{f}</div>
-                              ))}
-                            </div>
+                      {/* ── Functions Discovery ── */}
+                      {activeTab === 'functions' && (
+                        <div className="functions-discovery-main" style={{ marginTop: '30px', background: '#0d1117', border: '1px solid #30363d', borderRadius: '8px', padding: '24px' }}>
+                          <div className="section-title" style={{ marginBottom: '16px', display: 'flex', alignItems: 'center' }}>
+                            <h3 style={{ margin: 0, fontSize: '18px' }}>🛠️ Discovered Functions</h3>
+                            <span className="badge">{graphData?.nodes.filter((n: GraphNode) => n.data.type === 'Function').length || 0}</span>
                           </div>
-                          <div className="blast-recommendation">
-                            💡 {(blastResult as Record<string, unknown>).recommendation as string}
+
+                          <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
+                            gap: '16px',
+                            marginTop: '16px'
+                          }}>
+                            {graphData?.nodes
+                              .filter((n: GraphNode) => n.data.type === 'Function')
+                              .sort((a: GraphNode, b: GraphNode) => b.data.blast_radius - a.data.blast_radius)
+                              .map((fn: GraphNode) => (
+                                <div key={fn.id} className="ic-card" style={{ padding: '16px', marginBottom: 0, border: '1px solid #30363d' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                                    <div style={{ maxWidth: '70%' }}>
+                                      <h4 style={{ margin: 0, fontSize: '14px', color: '#e6edf3', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                        {fn.data.label}
+                                      </h4>
+                                      <code style={{ fontSize: '10px', color: '#8b949e' }}>{fn.data.file}</code>
+                                    </div>
+                                    <span style={{
+                                      fontSize: '10px',
+                                      background: fn.data.status === 'CRITICAL' ? 'rgba(248,81,73,0.1)' : 'rgba(56,139,253,0.1)',
+                                      color: fn.data.status === 'CRITICAL' ? '#f85149' : '#3fb950',
+                                      border: `1px solid ${fn.data.status === 'CRITICAL' ? '#f85149' : '#3fb950'}44`,
+                                      padding: '2px 8px',
+                                      borderRadius: '12px',
+                                      fontWeight: 'bold'
+                                    }}>
+                                      {fn.data.status}
+                                    </span>
+                                  </div>
+
+                                  <div style={{ display: 'flex', gap: '12px', marginTop: '12px' }}>
+                                    <div style={{ flex: 1 }}>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#8b949e', marginBottom: '4px' }}>
+                                        <span>Security</span>
+                                        <span>{fn.data.security_score}%</span>
+                                      </div>
+                                      <div style={{ height: '3px', background: '#21262d', borderRadius: '2px' }}>
+                                        <div style={{ height: '100%', background: '#f85149', width: `${fn.data.security_score}%`, borderRadius: '2px' }} />
+                                      </div>
+                                    </div>
+                                    <div style={{ flex: 1 }}>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#8b949e', marginBottom: '4px' }}>
+                                        <span>Connections</span>
+                                        <span>{fn.data.blast_radius}</span>
+                                      </div>
+                                      <div style={{ height: '3px', background: '#21262d', borderRadius: '2px' }}>
+                                        <div style={{ height: '100%', background: '#388bfd', width: `${Math.min(100, fn.data.blast_radius * 10)}%`, borderRadius: '2px' }} />
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))
+                            }
+                            {(!graphData || graphData.nodes.filter((n: GraphNode) => n.data.type === 'Function').length === 0) && (
+                              <div className="empty-state" style={{ gridColumn: '1/-1' }}>
+                                No functions discovered yet. Analyze the repository to build the graph.
+                              </div>
+                            )}
                           </div>
                         </div>
                       )}
 
-                      {blastResult?.error && (
-                        <div style={{ color: '#f85149', fontSize: '12px', padding: '8px' }}>
-                          {blastResult.error as string}
+                      {/* ── Live Production Telemetry ── */}
+                      {activeTab === 'server' && (
+                        <div style={{ marginTop: '30px' }}>
+                          <div className="setup-documentation-wrapper" style={{ marginBottom: '24px' }}>
+                            <div className="setup-header">
+                              <h3>📡 Connect Your Production Server</h3>
+                              <p>Stream live logs from any running process directly into this dashboard. Nexus-X will automatically detect crashes and trigger the AI forensic pipeline.</p>
+                            </div>
+                            <div className="doc-grid">
+                              <div className="doc-card">
+                                <div className="doc-step-badge">1</div>
+                                <h4>Inject Monitoring (One-Time)</h4>
+                                <p>Run <code style={{color: '#58a6ff'}}>nexus inject</code> in your project. It rewrites <code style={{color: '#58a6ff'}}>package.json</code> so <code style={{color: '#58a6ff'}}>npm start</code> automatically streams logs to Nexus-X.</p>
+                                <div className="terminal-block">
+                                  <div className="term-line term-line-interactive">
+                                    <span><span className="term-prompt">$</span> cd /path/to/your-project</span>
+                                  </div>
+                                  <div className="term-line term-line-interactive">
+                                    <span><span className="term-prompt">$</span> nexus inject</span>
+                                    <button className="clone-copy inline-copy" onClick={() => navigator.clipboard.writeText('nexus inject')} title="Copy">
+                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                    </button>
+                                  </div>
+                                </div>
+                                <p style={{fontSize: '11px', color: '#8b949e', marginTop: '8px'}}>This modifies <code>scripts.start</code> → <code>nexus attach {'<original>'}</code>. To undo: <code>nexus eject</code></p>
+                              </div>
+                              <div className="doc-card">
+                                <div className="doc-step-badge">2</div>
+                                <h4>Deploy Normally</h4>
+                                <p>Now just run your app like you always do. Nexus-X monitoring is baked in.</p>
+                                <div className="terminal-block">
+                                  <div className="term-line term-line-interactive">
+                                    <span><span className="term-prompt">$</span> npm start</span>
+                                    <button className="clone-copy inline-copy" onClick={() => navigator.clipboard.writeText('npm start')} title="Copy">
+                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                    </button>
+                                  </div>
+                                </div>
+                                <p style={{fontSize: '11px', color: '#8b949e', marginTop: '8px'}}>All stdout/stderr will stream live to this terminal. Crashes auto-trigger the AI forensic pipeline.</p>
+                              </div>
+                              <div className="doc-card full-span">
+                                <div className="doc-step-badge">⌥</div>
+                                <h4>Manual Alternative</h4>
+                                <p>If you don't want to modify <code style={{color: '#58a6ff'}}>package.json</code>, wrap any command manually:</p>
+                                <div className="terminal-block">
+                                  <div className="term-line term-line-interactive">
+                                    <span><span className="term-prompt">$</span> nexus attach node server.js</span>
+                                    <button className="clone-copy inline-copy" onClick={() => navigator.clipboard.writeText('nexus attach node server.js')} title="Copy">
+                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="production-telemetry" style={{ background: '#0d1117', border: '1px solid #30363d', borderRadius: '8px', padding: '24px' }}>
+                            <div className="section-title" style={{ marginBottom: '16px', display: 'flex', alignItems: 'center' }}>
+                              <h3 style={{ margin: 0, fontSize: '18px' }}>📡 Live Server Telemetry</h3>
+                            </div>
+                            <div style={{ height: '400px', width: '100%', border: '1px solid #30363d', borderRadius: '8px', overflow: 'hidden', background: '#010409' }}>
+                              <LiveTerminal workspace={p.cloneCode.split('/')[0]} project={p.cloneCode.split('/')[1]} />
+                            </div>
+                          </div>
                         </div>
                       )}
-                    </div>
+
+                      {/* ── Team Members ── */}
+                      {activeTab === 'team' && (
+                        <div className="proj-members-section" style={{ marginTop: '30px', background: '#0d1117', border: '1px solid #30363d', borderRadius: '8px', padding: '24px' }}>
+                          <div className="section-title" style={{ marginBottom: '16px' }}>
+                            <h3 style={{ margin: 0, fontSize: '18px' }}>Team Members</h3>
+                            <span className="badge">{p.members.length}</span>
+                          </div>
+                          <div className="add-member-widget">
+                            <div className="widget-label">&rarr; ATTACH_MEMBER</div>
+                            <div className="widget-row">
+                              <input className="dash-input w-name" placeholder="Full name" value={newMem.name} onChange={e => setNewMem({ ...newMem, name: e.target.value })} />
+                              <input className="dash-input w-email" placeholder="Email contact" value={newMem.email} onChange={e => setNewMem({ ...newMem, email: e.target.value })} />
+                              <select className="dash-select w-role" value={newMem.role} onChange={e => setNewMem({ ...newMem, role: e.target.value })}>
+                                <option value="developer">developer</option>
+                                <option value="admin">admin</option>
+                                <option value="viewer">viewer</option>
+                              </select>
+                              <button className="btn-dash-primary w-btn" onClick={() => handleAddMember(p.id)} disabled={!newMem.name || !newMem.email}>attach</button>
+                            </div>
+                          </div>
+                          <div className="members-grid" style={{ marginTop: '24px' }}>
+                            {p.members.length === 0 ? (
+                              <div className="empty-state">No members attached to this project.</div>
+                            ) : (
+                              p.members.map((m, idx) => (
+                                <div className="member-card" key={idx}>
+                                  <div className="m-av">{m.name.charAt(0).toUpperCase()}</div>
+                                  <div className="m-details">
+                                    <div className="m-n">{m.name}</div>
+                                    <div className="m-e">{m.email}</div>
+                                  </div>
+                                  <div className={`m-badge r-${m.role}`}>{m.role}</div>
+                                  <button className="m-del" onClick={() => removeMember(p.id, m.email)}>✕</button>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </>
                   )}
-
-                  {/* ── AI Incident Reports (Auto-Healer) ── */}
-                  <div className="incident-reports-main" style={{ marginTop: '30px' }}>
-                    <div className="section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <h3>🚨 Production Incidents (Auto-Healer)</h3>
-                        <span className="badge" style={{ background: incidents.length > 0 ? '#f85149' : '#238636' }}>{incidents.length}</span>
-                      </div>
-                      <button
-                        className="btn-dash-secondary"
-                        style={{ padding: '4px 12px', fontSize: '12px' }}
-                        onClick={() => activeProjectData && loadIncidents(activeProjectData.cloneCode)}
-                        disabled={!activeProjectData || incidentLoading}
-                      >
-                        {incidentLoading ? 'Refreshing...' : 'Refresh Incidents'}
-                      </button>
-                    </div>
-                    {incidentError && (
-                      <div style={{ color: '#f85149', fontSize: '12px', marginTop: '12px' }}>
-                        {incidentError}
-                      </div>
-                    )}
-                    {incidents.length > 0 && (
-                      <div
-                        className="ic-card"
-                        style={{
-                          marginTop: '16px',
-                          border: '1px solid rgba(248,81,73,0.35)',
-                          background: 'rgba(248,81,73,0.06)'
-                        }}
-                      >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', alignItems: 'center' }}>
-                          <div>
-                            <div style={{ color: '#f85149', fontWeight: 700, fontSize: '13px' }}>
-                              Latest incident: {incidents[0].incident_id}
-                            </div>
-                            <div style={{ color: '#e6edf3', fontSize: '12px', marginTop: '4px' }}>
-                              {incidents[0].summary}
-                            </div>
-                          </div>
-                          <button
-                            className="btn-dash-primary"
-                            onClick={async () => {
-                              if (!activeProjectData) return;
-                              const [ws, pn] = activeProjectData.cloneCode.split('/');
-                              const res = await fetch(`${BACKEND}/api/repo/${ws}/${pn}/incidents/${incidents[0].incident_id}`);
-                              if (res.ok) {
-                                const data = await res.json();
-                                setViewingIncident({
-                                  ...data,
-                                  report_markdown: buildIncidentMarkdown(data),
-                                });
-                              }
-                            }}
-                          >
-                            Open Latest Report
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                    {incidents.length === 0 ? (
-                      <div className="empty-state">No production crashes detected. System is stable.</div>
-                    ) : (
-                      <div className="incidents-list" style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '16px' }}>
-                        {incidents.map((inc) => (
-                          <div key={inc.incident_id} className="ic-card" style={{ padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                                <span style={{
-                                  background: 'rgba(248,81,73,0.1)', color: '#f85149', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold'
-                                }}>EXIT {inc.exit_code}</span>
-                                <strong style={{ color: '#e6edf3', fontSize: '14px' }}>{inc.incident_id}</strong>
-                                <span style={{ color: '#8b949e', fontSize: '12px' }}>• {new Date(inc.created_at).toLocaleString()}</span>
-                              </div>
-                              <div style={{ color: '#8b949e', fontSize: '12px' }}>{inc.summary}</div>
-                            </div>
-                            <button className="btn-dash-primary" onClick={async () => {
-                              try {
-                                if (!activeProjectData) return;
-                                const [ws, pn] = activeProjectData.cloneCode.split('/');
-                                const res = await fetch(`${BACKEND}/api/repo/${ws}/${pn}/incidents/${inc.incident_id}`);
-                                if (res.ok) {
-                                  const data = await res.json();
-                                  setViewingIncident({
-                                    ...data,
-                                    report_markdown: buildIncidentMarkdown(data),
-                                  });
-                                }
-                              } catch (e) { }
-                            }}>View AI Report</button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* ── Functions Discovery (Middle Screen) ── */}
-                  <div className="functions-discovery-main" style={{ marginTop: '30px' }}>
-                    <div className="section-title">
-                      <h3>🛠️ Discovered Functions</h3>
-                      <span className="badge">{graphData?.nodes.filter((n: GraphNode) => n.data.type === 'Function').length || 0}</span>
-                    </div>
-
-                    <div style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
-                      gap: '16px',
-                      marginTop: '16px'
-                    }}>
-                      {graphData?.nodes
-                        .filter((n: GraphNode) => n.data.type === 'Function')
-                        .sort((a: GraphNode, b: GraphNode) => b.data.blast_radius - a.data.blast_radius)
-                        .map((fn: GraphNode) => (
-                          <div key={fn.id} className="ic-card" style={{ padding: '16px', marginBottom: 0, border: '1px solid #30363d' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                              <div style={{ maxWidth: '70%' }}>
-                                <h4 style={{ margin: 0, fontSize: '14px', color: '#e6edf3', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  {fn.data.label}
-                                </h4>
-                                <code style={{ fontSize: '10px', color: '#8b949e' }}>{fn.data.file}</code>
-                              </div>
-                              <span style={{
-                                fontSize: '10px',
-                                background: fn.data.status === 'CRITICAL' ? 'rgba(248,81,73,0.1)' : 'rgba(56,139,253,0.1)',
-                                color: fn.data.status === 'CRITICAL' ? '#f85149' : '#3fb950',
-                                border: `1px solid ${fn.data.status === 'CRITICAL' ? '#f85149' : '#3fb950'}44`,
-                                padding: '2px 8px',
-                                borderRadius: '12px',
-                                fontWeight: 'bold'
-                              }}>
-                                {fn.data.status}
-                              </span>
-                            </div>
-
-                            <div style={{ display: 'flex', gap: '12px', marginTop: '12px' }}>
-                              <div style={{ flex: 1 }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#8b949e', marginBottom: '4px' }}>
-                                  <span>Security</span>
-                                  <span>{fn.data.security_score}%</span>
-                                </div>
-                                <div style={{ height: '3px', background: '#21262d', borderRadius: '2px' }}>
-                                  <div style={{ height: '100%', background: '#f85149', width: `${fn.data.security_score}%`, borderRadius: '2px' }} />
-                                </div>
-                              </div>
-                              <div style={{ flex: 1 }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#8b949e', marginBottom: '4px' }}>
-                                  <span>Connections</span>
-                                  <span>{fn.data.blast_radius}</span>
-                                </div>
-                                <div style={{ height: '3px', background: '#21262d', borderRadius: '2px' }}>
-                                  <div style={{ height: '100%', background: '#388bfd', width: `${Math.min(100, fn.data.blast_radius * 10)}%`, borderRadius: '2px' }} />
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        ))
-                      }
-                      {(!graphData || graphData.nodes.filter((n: GraphNode) => n.data.type === 'Function').length === 0) && (
-                        <div className="empty-state" style={{ gridColumn: '1/-1' }}>
-                          No functions discovered yet. Analyze the repository to build the graph.
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* ── File Tree from DB ── */}
+                  
                   <FileTree
                     data={treeData}
                     loading={treeLoading}
                     noPush={noPush}
                     onFileClick={handleFileClick}
                   />
-
-                  {/* ── Setup Guide ── */}
-                  <div className="setup-documentation-wrapper">
-                    <div className="setup-header">
-                      <h3>📚 Quick Setup Guide</h3>
-                      <p>To integrate your local repository with this NEXUS-X workspace and unlock structural code intelligence, follow the steps below.</p>
-                    </div>
-                    <div className="doc-grid">
-                      <div className="doc-card">
-                        <div className="doc-step-badge">1</div>
-                        <h4>Install Global CLI</h4>
-                        <p>NEXUS-X uses a seamless local CLI agent to parse your graph.</p>
-                        <div className="terminal-block">
-                          <div className="term-line"><span className="term-prompt">$</span> npm i -g nexus-x-cli</div>
-                        </div>
-                      </div>
-                      <div className="doc-card">
-                        <div className="doc-step-badge">2</div>
-                        <h4>Initialize &amp; Connect</h4>
-                        <p>Run the combined command inside your codebase to bootstrap the platform.</p>
-                        <div className="terminal-block">
-                          <div className="term-line term-line-interactive">
-                            <span><span className="term-prompt">$</span> nexus connect {BACKEND} {p.cloneCode}</span>
-                            <button className="clone-copy inline-copy" onClick={() => navigator.clipboard.writeText(`nexus connect ${BACKEND} ${p.cloneCode}`)} title="Copy">
-                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="doc-card full-span">
-                        <div className="doc-step-badge">3</div>
-                        <h4>Sync &amp; Analyze</h4>
-                        <p>Push your repository files and trigger the Code Intelligence Graph build.</p>
-                        <div className="terminal-block">
-                          <div className="term-line term-line-interactive">
-                            <span><span className="term-prompt">$</span> nexus push && nexus analyze</span>
-                            <button className="clone-copy inline-copy" onClick={() => navigator.clipboard.writeText(`nexus push && nexus analyze`)} title="Copy">
-                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* ── Team Members ── */}
-                  <div className="proj-members-section">
-                    <div className="section-title">
-                      <h3>Team Members</h3>
-                      <span className="badge">{p.members.length}</span>
-                    </div>
-                    <div className="add-member-widget">
-                      <div className="widget-label">&rarr; ATTACH_MEMBER</div>
-                      <div className="widget-row">
-                        <input className="dash-input w-name" placeholder="Full name" value={newMem.name} onChange={e => setNewMem({ ...newMem, name: e.target.value })} />
-                        <input className="dash-input w-email" placeholder="Email contact" value={newMem.email} onChange={e => setNewMem({ ...newMem, email: e.target.value })} />
-                        <select className="dash-select w-role" value={newMem.role} onChange={e => setNewMem({ ...newMem, role: e.target.value })}>
-                          <option value="developer">developer</option>
-                          <option value="admin">admin</option>
-                          <option value="viewer">viewer</option>
-                        </select>
-                        <button className="btn-dash-primary w-btn" onClick={() => handleAddMember(p.id)} disabled={!newMem.name || !newMem.email}>attach</button>
-                      </div>
-                    </div>
-                    <div className="members-grid">
-                      {p.members.length === 0 ? (
-                        <div className="empty-state">No members attached to this project.</div>
-                      ) : (
-                        p.members.map((m, idx) => (
-                          <div className="member-card" key={idx}>
-                            <div className="m-av">{m.name.charAt(0).toUpperCase()}</div>
-                            <div className="m-details">
-                              <div className="m-n">{m.name}</div>
-                              <div className="m-e">{m.email}</div>
-                            </div>
-                            <div className={`m-badge r-${m.role}`}>{m.role}</div>
-                            <button className="m-del" onClick={() => removeMember(p.id, m.email)}>✕</button>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
                 </div>
               );
             })()
