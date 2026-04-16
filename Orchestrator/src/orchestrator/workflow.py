@@ -8,7 +8,7 @@ from langgraph.graph import END, START, StateGraph
 from orchestrator.agents import (
     collect_docs_context,
     collect_observability_context,
-    collect_slack_context,
+    collect_servicenow_context,
     collect_tracker_context,
     merge_external_context,
     localize_code,
@@ -37,7 +37,7 @@ def build_workflow(
     graph = StateGraph(OrchestratorState)
     graph.add_node("triage", partial(triage_incident, llm=orchestrator_llm))
     graph.add_node("observability_agent", partial(collect_observability_context, registry=registry))
-    graph.add_node("slack_agent", partial(collect_slack_context, registry=registry))
+    graph.add_node("servicenow_agent", partial(collect_servicenow_context, registry=registry))
     graph.add_node("tracker_agent", partial(collect_tracker_context, registry=registry))
     graph.add_node("docs_agent", partial(collect_docs_context, registry=registry))
     graph.add_node("merge_context", merge_external_context)
@@ -47,8 +47,8 @@ def build_workflow(
 
     graph.add_edge(START, "triage")
     graph.add_edge("triage", "observability_agent")
-    graph.add_edge("observability_agent", "slack_agent")
-    graph.add_edge("slack_agent", "tracker_agent")
+    graph.add_edge("observability_agent", "servicenow_agent")
+    graph.add_edge("servicenow_agent", "tracker_agent")
     graph.add_edge("tracker_agent", "docs_agent")
     graph.add_edge("docs_agent", "merge_context")
     graph.add_edge("merge_context", "localize_code")

@@ -80,7 +80,14 @@ class RunnerConnectionManager:
         session = self.get_session(workspace, project)
         session.runner = None
         if session.status == "running":
-            session.status = "idle"
+            # If it disconnected while still running, it violently crashed
+            # without gracefully sending the exit packet.
+            # We must trigger the incident analyzer!
+            print(f"[RunnerHub] Runner violently disconnected without exit code! Triggering Orchestrator.")
+            session.status = "failed"
+            if session.exit_code is None:
+                session.exit_code = 1
+            await self._on_ci_failure(session)
 
     async def handle_runner_message(self, workspace: str, project: str, data: dict):
         """Process an incoming message from a CI runner."""
@@ -164,50 +171,44 @@ class RunnerConnectionManager:
             session.viewers.remove(d)
 
     async def _on_ci_failure(self, session: ProjectSession):
-        """Called when CI exits with non-zero code. Triggers auto-healing."""
+        """Called when process exits with non-zero code. Triggers incident analysis to inform the developer."""
         # Collect last 50 log lines as context
         recent_logs = [entry.get("line", "") for entry in session.logs[-50:]]
         error_lines = [entry.get("line", "") for entry in session.logs if entry.get("stream") == "stderr"][-20:]
 
-        failure_context = {
-            "workspace": session.workspace,
-            "project": session.project,
-            "exit_code": session.exit_code,
-            "recent_logs": recent_logs,
-            "error_lines": error_lines,
-        }
-
-        # Notify viewers about auto-heal starting
+        # Notify viewers that incident analysis is starting
         await self._broadcast_to_viewers(session, {
-            "type": "auto_heal_start",
-            "message": "Analyzing failure with AI...",
+            "type": "incident_analysis_start",
+            "message": "🔍 Analyzing failure — generating incident report for developer...",
             "timestamp": time.time()
         })
 
-        # Import here to avoid circular deps — the auto_healer will be called
+        # Run the multi-agent orchestration to produce a forensic report
         try:
-            from services.auto_healer import trigger_auto_heal
+            from services.incident_analyzer import trigger_incident_analysis
             import threading
 
-            def _run_heal():
-                result = trigger_auto_heal(
+            def _run_analysis():
+                result = trigger_incident_analysis(
                     workspace=session.workspace,
                     project=session.project,
                     logs=recent_logs,
                     error_lines=error_lines,
                     exit_code=session.exit_code or 1
                 )
-                # We can't await from a thread, so we store the result
+                # Store the analysis result for the Dashboard to pick up
                 session.logs.append({
-                    "type": "auto_heal_result",
-                    "result": result,
+                    "type": "incident_report",
+                    "incident_id": result.get("incident_id"),
+                    "summary": result.get("summary"),
+                    "status": result.get("status"),
                     "timestamp": time.time()
                 })
 
-            thread = threading.Thread(target=_run_heal, daemon=True)
+            thread = threading.Thread(target=_run_analysis, daemon=True)
             thread.start()
         except Exception as e:
-            print(f"[RunnerHub] Auto-heal trigger failed: {e}")
+            print(f"[RunnerHub] Incident analysis trigger failed: {e}")
 
     def on_failure_callback(self, callback):
         """Register a callback for CI failures."""

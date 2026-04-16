@@ -1,43 +1,30 @@
 from __future__ import annotations
 
+import json
 import os
 import re
-import json
+import requests
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 from orchestrator.models import CodeLocation, IncidentInput
 
-try:
-    from neo4j import GraphDatabase
-except ImportError:  # pragma: no cover - optional dependency at runtime until installed
-    GraphDatabase = None
-
-
 load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 
-GRAPH_NODE_LABELS = ("Function", "Class", "File", "Module")
-GRAPH_RELATIONSHIP_TYPES = ("CALLS", "IMPORTS", "EXTENDS", "CONTAINS", "BELONGS_TO", "DEPENDS_ON")
-
-
-class Neo4jGraphLocator:
+class NexusGraphLocator:
     def __init__(self, project: str | None = None):
         self.project = project or os.getenv("NEO4J_PROJECT") or os.getenv("NEXUS_GRAPH_PROJECT")
-        self.uri = os.getenv("NEO4J_URI")
-        self.username = os.getenv("NEO4J_USERNAME")
-        self.password = os.getenv("NEO4J_PASSWORD")
-        self.database = os.getenv("NEO4J_DATABASE")
+        
+        # Try to use configured API URL, default to localhost
+        api_base = os.getenv("NEXUS_API_URL")
+        # Strip trailing slash if present
+        if api_base and api_base.endswith('/'):
+            api_base = api_base[:-1]
+        self.api_url = api_base or "http://localhost:8000"
 
     def is_configured(self) -> bool:
-        return bool(
-            GraphDatabase is not None
-            and self.uri
-            and self.username
-            and self.password
-            and self.database
-            and self.project
-        )
+        return bool(self.project and self.api_url)
 
     def locate(self, incident: IncidentInput, search_terms: list[str]) -> list[CodeLocation]:
         if not self.is_configured():
@@ -47,50 +34,33 @@ class Neo4jGraphLocator:
         symbol_hints = self._extract_symbol_hints(incident, search_terms)
         normalized_terms = [term.lower() for term in search_terms if len(term) >= 3][:25]
 
-        query = """
-        MATCH (target {project: $project})
-        WHERE any(label IN labels(target) WHERE label IN $node_labels)
-          AND (
-            target.name IN $symbol_hints
-            OR target.file_path IN $file_hints
-            OR any(hint IN $file_hints WHERE target.file_path ENDS WITH hint)
-            OR any(term IN $search_terms WHERE toLower(coalesce(target.qualified_name, "")) CONTAINS term)
-            OR any(term IN $search_terms WHERE toLower(coalesce(target.file_path, "")) CONTAINS term)
-            OR any(term IN $search_terms WHERE toLower(coalesce(target.summary, "")) CONTAINS term)
-          )
-        OPTIONAL MATCH (target)-[r]->(downstream {project: $project})
-        WHERE type(r) IN $relationship_types
-        RETURN labels(target) AS labels,
-               target.name AS name,
-               target.qualified_name AS qualified_name,
-               target.file_path AS file_path,
-               target.start_line AS start_line,
-               target.summary AS summary,
-               target.blast_radius AS blast_radius,
-               collect(DISTINCT {
-                   rel_type: type(r),
-                   neighbor: coalesce(downstream.name, downstream.file_path, downstream.qualified_name)
-               })[..8] AS outbound
-        ORDER BY coalesce(target.blast_radius, 0) DESC, target.name ASC
-        LIMIT 12
-        """
+        # Extract workspace and project
+        parts = self.project.split('/')
+        if len(parts) >= 2:
+            workspace, project_name = parts[0], parts[1]
+        else:
+            return []
 
+        endpoint = f"{self.api_url}/api/repo/{workspace}/{project_name}/locate"
+        
         try:
-            with GraphDatabase.driver(self.uri, auth=(self.username, self.password)) as driver:
-                with driver.session(database=self.database) as session:
-                    records = session.run(
-                        query,
-                        {
-                            "project": self.project,
-                            "node_labels": list(GRAPH_NODE_LABELS),
-                            "relationship_types": list(GRAPH_RELATIONSHIP_TYPES),
-                            "search_terms": normalized_terms,
-                            "file_hints": file_hints,
-                            "symbol_hints": symbol_hints,
-                        },
-                    )
-                    rows = [record.data() for record in records]
-        except Exception:
+            res = requests.post(
+                endpoint,
+                json={
+                    "search_terms": normalized_terms,
+                    "file_hints": file_hints,
+                    "symbol_hints": symbol_hints,
+                },
+                timeout=30.0
+            )
+            
+            if res.status_code != 200:
+                print(f"[Orchestrator] Backend locator failed: {res.text}")
+                return []
+                
+            rows = res.json()
+        except Exception as e:
+            print(f"[Orchestrator] Failed to connect to backend locator: {e}")
             return []
 
         return [self._to_code_location(row, file_hints, normalized_terms) for row in rows if row.get("file_path")]
@@ -98,33 +68,12 @@ class Neo4jGraphLocator:
     def describe_project(self) -> dict:
         details = {
             "configured": self.is_configured(),
-            "uri": self.uri,
-            "database": self.database,
+            "uri": self.api_url,
+            "database": "nexus-backend",
             "project": self.project,
             "counts": {},
         }
-        if not self.is_configured():
-            return details
-
-        query = """
-        MATCH (n {project: $project})
-        WHERE any(label IN labels(n) WHERE label IN $node_labels)
-        RETURN labels(n)[0] AS label, count(*) AS count
-        ORDER BY label ASC
-        """
-        try:
-            with GraphDatabase.driver(self.uri, auth=(self.username, self.password)) as driver:
-                with driver.session(database=self.database) as session:
-                    rows = [
-                        record.data()
-                        for record in session.run(
-                            query,
-                            {"project": self.project, "node_labels": list(GRAPH_NODE_LABELS)},
-                        )
-                    ]
-            details["counts"] = {row["label"]: row["count"] for row in rows}
-        except Exception as exc:
-            details["error"] = str(exc)
+        # A mock implementation or future backend call if needed
         return details
 
     def _extract_symbol_hints(self, incident: IncidentInput, search_terms: list[str]) -> list[str]:
@@ -149,7 +98,7 @@ class Neo4jGraphLocator:
         outbound = row.get("outbound") or []
 
         score = 0.35
-        rationale_bits: list[str] = ["matched Neo4j project-scoped code graph"]
+        rationale_bits: list[str] = ["matched Nexus project-scoped code graph"]
 
         if any(file_path.endswith(hint) for hint in file_hints):
             score += 0.25
@@ -188,7 +137,7 @@ class RepositoryLocator:
     def __init__(self, repo_root: Path | None = None, graph_project: str | None = None):
         self.repo_root = repo_root
         resolved_project = graph_project or self._resolve_graph_project(repo_root)
-        self.graph_locator = Neo4jGraphLocator(project=resolved_project)
+        self.graph_locator = NexusGraphLocator(project=resolved_project)
 
     def locate(self, incident: IncidentInput, search_terms: list[str]) -> list[CodeLocation]:
         graph_hits = self.graph_locator.locate(incident, search_terms)

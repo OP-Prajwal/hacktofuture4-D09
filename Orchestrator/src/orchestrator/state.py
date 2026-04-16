@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TypedDict
 
 from .models import CodeLocation, EvidenceItem, HistoricalIncident, Hypothesis, IncidentInput
@@ -16,6 +17,8 @@ class OrchestratorState(TypedDict, total=False):
     docs_hits: list[HistoricalIncident]
     historical_incidents: list[HistoricalIncident]
     candidate_locations: list[CodeLocation]
+    locations: list[CodeLocation]          # alias used by reporter
     hypotheses: list[Hypothesis]
     report_markdown: str
     report_path: str
+    repo_root: Path | None                # passed through from CLI for source reading

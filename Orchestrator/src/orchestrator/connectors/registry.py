@@ -3,12 +3,11 @@ from pathlib import Path
 from typing import Any
 
 from orchestrator.models import HistoricalIncident, IncidentInput
-
 from .adapters import (
     DocsRunbookMCPConnector,
     IncidentTrackerMCPConnector,
     ObservabilityMCPConnector,
-    SlackMCPConnector,
+    ServiceNowMCPConnector,
 )
 from .base import ExternalKnowledgeConnector
 from .mcp import StdioMCPClient
@@ -36,7 +35,7 @@ class ConnectorRegistry:
         try:
             config = json.loads(config_path.read_text(encoding="utf-8"))
             mapping = {
-                "slack": SlackMCPConnector,
+                "servicenow": ServiceNowMCPConnector,
                 "tracker": IncidentTrackerMCPConnector,
                 "docs": DocsRunbookMCPConnector,
                 "observability": ObservabilityMCPConnector,

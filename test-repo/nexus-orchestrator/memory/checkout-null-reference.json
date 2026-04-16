@@ -1,0 +1,8 @@
+{
+  "title": "Checkout handler null reference after payload change",
+  "summary": "A checkout deploy introduced a missing request field and the handler accessed a property on an undefined object. The failure surfaced as a TypeError in the request path.",
+  "resolution": "Guard the optional field, validate the request shape earlier, and redeploy.",
+  "confidence": 0.81
+}  
+
+

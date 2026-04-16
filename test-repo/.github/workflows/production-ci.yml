@@ -1,0 +1,62 @@
+name: Nexus-X Production CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  test_and_analyze:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run Test Suite
+        id: tests
+        # We run the test script. If it fails, we pipe the stack trace to pytest_output.txt
+        run: |
+          python test_auth_raw.py > pytest_output.txt 2>&1
+        continue-on-error: true # Keep going even if the tests fail so Orchestrator can run
+
+      - name: Catch Incident & Generate Payload
+        if: steps.tests.outcome == 'failure'
+        run: |
+          echo "Test Suite failed! Captured stack trace."
+          cat pytest_output.txt | python capture_incident.py
+
+      - name: Install Nexus-X Orchestrator
+        if: steps.tests.outcome == 'failure'
+        run: |
+          # We packed the orchestrator with the repo for this test
+          pip install -e ./nexus-orchestrator
+          
+      - name: Boot AI Forensic Agent (Orchestrator)
+        if: steps.tests.outcome == 'failure'
+        env:
+          NEXUS_API_URL: ${{ secrets.NEXUS_API_URL_SECRET }}
+          NEXUS_LLM_PROVIDER: ollama
+          NEXUS_LLM_MODEL: qwen2.5-coder:3b
+          NEXUS_LLM_BASE_URL: ${{ secrets.NEXUS_LLM_URL_SECRET }}
+        run: |
+          echo "Booting Orchestrator... Connecting to your remote Ngrok instances..."
+          python -m orchestrator.main run incident.json --repo-root . --output-dir ci_reports
+
+      - name: Upload Forensic Report
+        if: steps.tests.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexus-x-incident-report
+          path: ci_reports/*.md
+
+      # Fails the actual pipeline at the very end so GitHub Action marks it RED
+      - name: Enforce Pipeline Failure
+        if: steps.tests.outcome == 'failure'
+        run: exit 1

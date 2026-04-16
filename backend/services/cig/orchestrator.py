@@ -203,13 +203,7 @@ def analyze_repository(workspace: str, project_name: str, local_path: str | None
     )
     print(f"[CIG] Step 4 took {time.time()-t4:.1f}s — {len(graph_nodes)} nodes, {len(graph_edges)} edges")
 
-    # ── Step 5: Write to Neo4j (best-effort) ──────────────────────────────
-    _update_job(job_id, "Writing graph to Neo4j...", 75)
-    t5 = time.time()
-    neo4j_stats = _write_to_neo4j(graph_nodes, graph_edges, project_path)
-    print(f"[CIG] Step 5 took {time.time()-t5:.1f}s")
-
-    # ── Step 6: Store snapshot in MongoDB ─────────────────────────────────
+    # ── Step 5: Store snapshot in MongoDB ─────────────────────────────────
     _update_job(job_id, "Storing graph snapshot...", 90)
     t6 = time.time()
     graphs_col = mongo.get_collection("graphs")
@@ -223,7 +217,7 @@ def analyze_repository(workspace: str, project_name: str, local_path: str | None
         "total_nodes": len(graph_nodes),
         "total_edges": len(graph_edges),
     })
-    print(f"[CIG] Step 6 took {time.time()-t6:.1f}s")
+    print(f"[CIG] Step 5 took {time.time()-t6:.1f}s")
 
     # ── Done ──────────────────────────────────────────────────────────────
     total_time = time.time() - t_start
@@ -242,7 +236,6 @@ def analyze_repository(workspace: str, project_name: str, local_path: str | None
             "nodes": raw_graph.get("total_nodes", 0),
             "edges": raw_graph.get("total_edges", 0),
         },
-        "neo4j": neo4j_stats,
         "time_seconds": round(total_time, 1),
     }
 
@@ -477,7 +470,8 @@ def _transform_gitnexus_graph(
     node_ids = {project_path}
     
     # Noise Filter (Documentation and auto-generated files)
-    NOISE_FILES = {"CLAUDE.md", "AGENTS.md", "README.md", "LICENSE", ".gitnexus"}
+    NOISE_FILES = {"CLAUDE.md", "AGENTS.md", "README.md", "LICENSE", ".gitnexus", ".gitignore", "incident.json"}
+    NOISE_DIRS = {".claude", ".github", ".gitnexus", ".nexus", "__pycache__", "ci_reports", "node_modules", "nexus-orchestrator", "venv", ".venv"}
 
     # 1. Process all raw nodes
     for n in raw_nodes:
@@ -488,8 +482,9 @@ def _transform_gitnexus_graph(
         file_path = n.get("filePath", "")
         filename = file_path.replace("\\", "/").split("/")[-1]
 
-        # FILTER: Skip documentation noise and GitNexus internal files
-        if filename in NOISE_FILES or ".gitnexus" in file_path:
+        # FILTER: Skip documentation noise and GitNexus internal directories
+        path_parts = file_path.replace("\\", "/").split("/")
+        if any(d in path_parts for d in NOISE_DIRS) or filename in NOISE_FILES:
             continue
         if label == "Section": continue # Skip Markdown headers entirely
 
@@ -560,108 +555,6 @@ def _transform_gitnexus_graph(
     return graph_nodes, graph_edges
 
 
-def _write_to_neo4j(
-    nodes: list[dict],
-    edges: list[dict],
-    project_path: str,
-) -> dict:
-    """Write graph to Neo4j using batched UNWIND queries for speed."""
-    import time
-    try:
-        from db.neo4j_db import neo4j_db
-
-        t0 = time.time()
-
-        # Clear old data
-        neo4j_db.run_query(
-            "MATCH (n) WHERE n.project = $path DETACH DELETE n",
-            {"path": project_path}
-        )
-        print(f"[CIG] Neo4j: cleared old data in {time.time()-t0:.1f}s")
-
-        # ── Batch insert nodes by type using UNWIND ──────────────────────
-        t1 = time.time()
-        nodes_created = 0
-
-        # Group nodes by type for efficient batch creation
-        nodes_by_type: dict[str, list[dict]] = {}
-        for n in nodes:
-            node_type = n.get("type", "Function")
-            # Sanitize type to prevent Cypher injection
-            node_type = "".join(c for c in node_type if c.isalnum() or c == "_")
-            if not node_type:
-                node_type = "Function"
-            nodes_by_type.setdefault(node_type, []).append({
-                "id": n["id"],
-                "name": n.get("name", ""),
-                "file": n.get("file", ""),
-                "summary": n.get("summary", ""),
-                "tags": n.get("tags", []),
-                "blast_radius": n.get("blast_radius", 0),
-                "line": n.get("line", 0),
-            })
-
-        for node_type, batch in nodes_by_type.items():
-            try:
-                neo4j_db.run_query(f"""
-                    UNWIND $batch AS row
-                    CREATE (n:{node_type} {{
-                        qualified_name: row.id,
-                        name: row.name,
-                        file_path: row.file,
-                        project: $project,
-                        summary: row.summary,
-                        tags: row.tags,
-                        blast_radius: row.blast_radius,
-                        start_line: row.line
-                    }})
-                """, {"batch": batch, "project": project_path})
-                nodes_created += len(batch)
-            except Exception as e:
-                print(f"[CIG] Neo4j batch insert for {node_type} failed: {e}")
-
-        print(f"[CIG] Neo4j: inserted {nodes_created} nodes in {time.time()-t1:.1f}s")
-
-        # ── Batch insert edges by type using UNWIND ──────────────────────
-        t2 = time.time()
-        edges_created = 0
-
-        # Group edges by relationship type
-        edges_by_type: dict[str, list[dict]] = {}
-        for e in edges:
-            rel_type = e.get("type", "CALLS")
-            rel_type = "".join(c for c in rel_type if c.isalnum() or c == "_")
-            if not rel_type:
-                rel_type = "CALLS"
-            edges_by_type.setdefault(rel_type, []).append({
-                "source": e["source"],
-                "target": e["target"],
-            })
-
-        for rel_type, batch in edges_by_type.items():
-            try:
-                neo4j_db.run_query(f"""
-                    UNWIND $batch AS row
-                    MATCH (a {{qualified_name: row.source, project: $project}})
-                    MATCH (b {{qualified_name: row.target, project: $project}})
-                    CREATE (a)-[:{rel_type}]->(b)
-                """, {"batch": batch, "project": project_path})
-                edges_created += len(batch)
-            except Exception as e:
-                print(f"[CIG] Neo4j batch edge insert for {rel_type} failed: {e}")
-
-        print(f"[CIG] Neo4j: inserted {edges_created} edges in {time.time()-t2:.1f}s")
-
-        stats = {"nodes_created": nodes_created, "edges_created": edges_created}
-        print(f"[CIG] Neo4j total write time: {time.time()-t0:.1f}s")
-        return stats
-
-    except Exception as e:
-        print(f"[CIG] Neo4j write failed (non-fatal): {e}")
-        return {"error": str(e)}
-
-
-# ─── Graph retrieval (unchanged — works with MongoDB/Neo4j data) ─────────────
 
 def _refine_and_transform_graph(nodes, edges, project_path):
     """Refine and transform raw graph data into the GitNexus format."""
@@ -777,46 +670,10 @@ def _refine_and_transform_graph(nodes, edges, project_path):
 
 def get_project_graph(workspace: str, project_name: str) -> dict:
     """
-    Retrieve the knowledge graph.
+    Retrieve the knowledge graph dynamically from MongoDB array structures.
     """
     project_path = f"{workspace}/{project_name}"
 
-    # ── Try Neo4j first ──────────────────────────────────────────────────
-    try:
-        from db.neo4j_db import neo4j_db
-        node_records = neo4j_db.run_query("""
-            MATCH (n)
-            WHERE (n.project = $path OR (labels(n)[0] = 'Project' AND n.path = $path))
-              AND NOT coalesce(n.file_path, '') CONTAINS '.gitnexus'
-              AND NOT n.name IN ['CLAUDE.md', 'AGENTS.md', '.gitnexus']
-            RETURN
-                labels(n)[0] AS label,
-                coalesce(n.qualified_name, n.path, '') AS id,
-                coalesce(n.name, '') AS name,
-                coalesce(n.file_path, n.path, '') AS file,
-                labels(n)[0] AS type,
-                coalesce(n.summary, '') AS summary,
-                coalesce(n.tags, []) AS tags,
-                coalesce(n.start_line, 0) AS line
-        """, {"path": project_path})
-
-        edge_records = neo4j_db.run_query("""
-            MATCH (src)-[r]->(tgt)
-            WHERE (src.project = $path OR src.path = $path)
-              AND (tgt.project = $path OR tgt.path = $path)
-            RETURN
-                coalesce(src.qualified_name, src.path, '') AS source,
-                coalesce(tgt.qualified_name, tgt.path, '') AS target,
-                type(r) AS type
-        """, {"path": project_path})
-
-        if node_records:
-            return _refine_and_transform_graph(node_records, edge_records, project_path)
-
-    except Exception as e:
-        print(f"[CIG] Neo4j graph fetch failed (falling back to MongoDB): {e}")
-
-    # ── Fall back to MongoDB snapshot ─────────────────────────────────────
     graphs_col = mongo.get_collection("graphs")
     doc = graphs_col.find_one({"project": project_path}, {"_id": 0})
 

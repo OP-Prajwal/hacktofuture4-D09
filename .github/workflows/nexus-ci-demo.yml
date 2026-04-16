@@ -1,0 +1,72 @@
+name: Nexus-X AI CI/CD Pipeline
+
+on:
+  workflow_dispatch: # Allows you to manually trigger the workflow from the Actions tab for the demo!
+  push:
+    branches:
+      - main
+      - demo
+
+jobs:
+  test-and-investigate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📦 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: ⚙️ Install Nexus-X Orchestrator
+        run: |
+          cd Orchestrator
+          pip install -e .
+          # Install any additional dependencies if needed
+
+      - name: 🧪 Run CI Test Suite
+        id: test_suite
+        run: |
+          cd test-repo
+          # Run the test suite and route output to file, capturing failures
+          python test_auth_raw.py > pytest_output.txt 2>&1
+        continue-on-error: true # If tests fail, don't stop the workflow yet!
+
+      - name: 🚨 Nexus-X Autonomous Investigation (Activated on Failure)
+        if: steps.test_suite.outcome == 'failure'
+        env:
+          # Use your ngrok tunnel so GitHub can reach your local Backend and Ollama!
+          # For a quick demo, you can hardcode your Ngrok URLs here, or add them as GitHub Repository Secrets
+          NEXUS_API_URL: ${{ secrets.NEXUS_API_URL || 'https://YOUR_NGROK_ID.ngrok-free.app' }} 
+          OLLAMA_BASE_URL: ${{ secrets.OLLAMA_BASE_URL || 'https://YOUR_OLLAMA_NGROK_ID.ngrok-free.app' }}
+          NEXUS_LLM_PROVIDER: ollama
+          NEXUS_LLM_MODEL: qwen2.5-coder:3b
+        run: |
+          echo "==== TESTS FAILED! Triggering Nexus-X Incident Orchestrator ===="
+          cd test-repo
+          
+          # Show the raw failure text
+          cat pytest_output.txt
+
+          echo ""
+          echo "🤖 Capturing incident payload..."
+          cat pytest_output.txt | python capture_incident.py
+
+          echo ""
+          echo "🧠 Booting AI Forensic Agent..."
+          python -m orchestrator.main run incident.json --repo-root . --output-dir ci_reports
+          
+          echo "✅ Investigation complete! Surfacing artifact to GitHub Summary."
+          cat ci_reports/*.md >> $GITHUB_STEP_SUMMARY
+
+      - name: 📄 Attach AI Forensic Report to Pipeline
+        if: steps.test_suite.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI-Forensic-Report
+          path: test-repo/ci_reports/*.md
+
+      - name: ❌ Fail the Process Ensure Red Build
+        if: steps.test_suite.outcome == 'failure'
+        run: exit 1

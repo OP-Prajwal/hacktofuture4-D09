@@ -5,7 +5,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 from db.mongo import mongo
-from db.neo4j_db import neo4j_db
 from services.project_service import ProjectPushRequest, build_project_graph_from_payload
 from services.blob_service import has_blob, stream_blob_to_gridfs, get_blob_info, is_text_file
 from services.commit_service import create_commit, get_commits, get_latest_tree
@@ -293,6 +292,21 @@ def query_project(workspace: str, project_name: str, body: QueryRequest):
 
 # ─── Blast Radius API ─────────────────────────────────────────────────────────
 
+from services.cig.locator import locate_incident_nodes
+
+class LocateRequest(BaseModel):
+    search_terms: List[str]
+    file_hints: List[str]
+    symbol_hints: List[str]
+
+@app.post("/api/repo/{workspace}/{project_name}/locate")
+def locate_incident(workspace: str, project_name: str, body: LocateRequest):
+    try:
+        project_path = f"{workspace}/{project_name}"
+        return locate_incident_nodes(project_path, body.search_terms, body.file_hints, body.symbol_hints)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 from services.cig.blast_radius import calculate_blast_radius
 
 class BlastRadiusRequest(BaseModel):
@@ -346,6 +360,108 @@ async def ws_viewer(websocket: WebSocket, workspace: str, project_name: str):
 def get_runner_status(workspace: str, project_name: str):
     """Get the current CI/CD runner status for a project."""
     return runner_hub.get_status(workspace, project_name)
+
+
+# ─── HTTP Log Ingestion (fallback when WebSocket isn't available) ─────────────
+
+class LogBatch(BaseModel):
+    logs: List[dict]
+    exit_code: Optional[int] = None
+
+@app.post("/api/repo/{workspace}/{project_name}/logs")
+async def ingest_logs(workspace: str, project_name: str, body: LogBatch):
+    """
+    HTTP fallback for log ingestion when WebSocket isn't available.
+    Stores logs in MongoDB and replays them to any connected Dashboard viewers.
+    """
+    session = runner_hub.get_session(workspace, project_name)
+
+    for entry in body.logs:
+        log_entry = {
+            "type": "log",
+            "line": entry.get("line", ""),
+            "stream": entry.get("stream", "stdout"),
+            "timestamp": entry.get("ts", 0) / 1000
+        }
+        session.logs.append(log_entry)
+
+    if body.exit_code is not None:
+        session.exit_code = body.exit_code
+        session.status = "success" if body.exit_code == 0 else "failed"
+        
+        # Trigger the Orchestrator if the process crashed!
+        if body.exit_code != 0:
+            print(f"[HTTP Logs] Received exit code {body.exit_code}! Triggering Orchestrator...")
+            await runner_hub._on_ci_failure(session)
+
+    logs_col = mongo.get_collection("runtime_logs")
+    logs_col.insert_one({
+        "workspace": workspace,
+        "project": project_name,
+        "logs": body.logs,
+        "exit_code": body.exit_code,
+        "total_lines": len(body.logs),
+    })
+
+    return {
+        "status": "ok",
+        "lines_ingested": len(body.logs),
+        "session_status": session.status
+    }
+
+@app.get("/api/repo/{workspace}/{project_name}/logs")
+def get_logs(workspace: str, project_name: str, limit: int = 200):
+    """Retrieve recent runtime logs for a project."""
+    session = runner_hub.get_session(workspace, project_name)
+    if session.logs:
+        return {
+            "status": session.status,
+            "exit_code": session.exit_code,
+            "total": len(session.logs),
+            "logs": session.logs[-limit:]
+        }
+
+    logs_col = mongo.get_collection("runtime_logs")
+    doc = logs_col.find_one(
+        {"workspace": workspace, "project": project_name},
+        sort=[("_id", -1)]
+    )
+    if doc:
+        return {
+            "status": "historical",
+            "exit_code": doc.get("exit_code"),
+            "total": doc.get("total_lines", 0),
+            "logs": doc.get("logs", [])[-limit:]
+        }
+
+    return {"status": "no_logs", "logs": [], "total": 0}
+
+
+# ─── Incident Reports API ────────────────────────────────────────────────────
+
+@app.get("/api/repo/{workspace}/{project_name}/incidents")
+def list_incidents(workspace: str, project_name: str, limit: int = 20):
+    """List all forensic incident reports for a project."""
+    reports_col = mongo.get_collection("incident_reports")
+    docs = list(reports_col.find(
+        {"workspace": workspace, "project": project_name},
+        {"_id": 0, "report_markdown": 0}  # Exclude heavy fields from list
+    ).sort("created_at", -1).limit(limit))
+
+    return {"incidents": docs, "total": len(docs)}
+
+
+@app.get("/api/repo/{workspace}/{project_name}/incidents/{incident_id}")
+def get_incident(workspace: str, project_name: str, incident_id: str):
+    """Get a specific forensic incident report with full markdown."""
+    reports_col = mongo.get_collection("incident_reports")
+    doc = reports_col.find_one(
+        {"workspace": workspace, "project": project_name, "incident_id": incident_id},
+        {"_id": 0}
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Incident report not found")
+    return doc
 
 
 # ─── Health / test routes ─────────────────────────────────────────────────────

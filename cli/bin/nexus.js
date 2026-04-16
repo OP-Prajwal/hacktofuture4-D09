@@ -9,9 +9,13 @@ import ora from 'ora';
 import crypto from 'crypto';
 
 const program = new Command();
-const BACKEND_URL = process.env.NEXUS_BACKEND_URL || 'http://localhost:8000';
 const NEXUS_DIR = '.nexus';
 const CONFIG_FILE = 'config.json';
+
+// Resolve the backend URL: config > env > default
+function getBackendUrl(config) {
+  return config?.server || process.env.NEXUS_BACKEND_URL || 'http://localhost:8000';
+}
 
 const IGNORED_DIRS = new Set([
   '.git', 'node_modules', '.nexus', '__pycache__',
@@ -143,8 +147,37 @@ program
   });
 
 program
+  .command('connect')
+  .description('Connect this project to a Nexus-X server')
+  .argument('<server>', 'Nexus-X backend URL (e.g. https://nexus-x.yourcompany.com or http://localhost:8000)')
+  .argument('<remote>', 'Workspace/Project code (e.g. mohit/my-project-abc123)')
+  .action((server, remote) => {
+    if (!remote.includes('/')) {
+      console.error(chalk.red('Invalid format. Expected <workspace>/<project>'));
+      process.exit(1);
+    }
+
+    // Clean trailing slash
+    server = server.replace(/\/+$/, '');
+
+    // Init .nexus if not already present
+    const dirPath = path.join(process.cwd(), NEXUS_DIR);
+    if (!fs.existsSync(dirPath)) fs.mkdirSync(dirPath);
+
+    const config = { server, remote };
+    writeConfig(config);
+
+    console.log(chalk.cyan('\n🔗 NEXUS-X Connection Established\n'));
+    console.log(chalk.white(`  Server:    ${chalk.bold(server)}`));
+    console.log(chalk.white(`  Project:   ${chalk.bold(remote)}`));
+    console.log(chalk.white(`  Config:    ${chalk.gray(getConfigPath())}\n`));
+    console.log(chalk.green('✓ Ready. Run `nexus push` to sync your codebase.\n'));
+  });
+
+// Keep legacy `remote` as alias
+program
   .command('remote')
-  .description('Set the remote origin using <workspace>/<project>')
+  .description('(Legacy) Set the remote origin — prefer `nexus connect`')
   .argument('<url>', 'Remote short code (e.g. acme/my-project-abc123)')
   .action((url) => {
     if (!url.includes('/')) {
@@ -169,6 +202,7 @@ program
 
     const [workspace, project] = config.remote.split('/');
     const currentDir = process.cwd();
+    const BACKEND_URL = getBackendUrl(config);
     const api = `${BACKEND_URL}/api/repo/${workspace}/${project}`;
 
     // ── Step 1: Walk and stream-hash ─────────────────────────────────────────
@@ -260,6 +294,180 @@ program
   });
 
 program
+  .command('ci [args...]')
+  .description('Wrap a build process and automatically sync the codebase graph upon success')
+  .action((args) => {
+    if (args.length === 0) {
+      console.error(chalk.red('Fatal: No build command provided. Usage: nexus ci <command> (e.g. nexus ci npm run build)'));
+      process.exit(1);
+    }
+
+    const { spawnSync } = require('child_process');
+    const cmdStr = args.join(' ');
+
+    console.log(chalk.cyan(`\n🚀 [NEXUS-X Pipeline] Executing Build Command: ${chalk.bold(cmdStr)}\n`));
+
+    // Spawn the wrapped build command
+    const result = spawnSync(args[0], args.slice(1), { stdio: 'inherit', shell: true });
+
+    if (result.status !== 0) {
+      console.error(chalk.red(`\n❌ [NEXUS-X Pipeline] Build failed (exit code ${result.status}). Graph synchronization aborted.`));
+      process.exit(result.status || 1);
+    }
+
+    console.log(chalk.green(`\n✓ [NEXUS-X Pipeline] Build succeeded! Synchronizing graph with Nexus backend...\n`));
+
+    // Automatically trigger 'nexus push' upon build success
+    const pushResult = spawnSync('node', [__filename, 'push'], { stdio: 'inherit', shell: true });
+
+    if (pushResult.status !== 0) {
+      console.error(chalk.red('\n❌ [NEXUS-X Pipeline] Graph synchronization failed.'));
+      process.exit(pushResult.status || 1);
+    }
+  });
+
+// ─── Live Telemetry Agent ─────────────────────────────────────────────────────
+
+program
+  .command('run [args...]')
+  .description('Run a production process and stream all logs/errors live to Nexus-X')
+  .action(async (args) => {
+    if (args.length === 0) {
+      console.error(chalk.red('Fatal: No command provided. Usage: nexus run <command> (e.g. nexus run node server.js)'));
+      process.exit(1);
+    }
+
+    const config = readConfig();
+    if (!config.remote) {
+      console.error(chalk.red('Fatal: No remote set. Run `nexus connect <server> <workspace>/<project>` first.'));
+      process.exit(1);
+    }
+
+    const [workspace, project] = config.remote.split('/');
+    const BACKEND_URL = getBackendUrl(config);
+    const wsUrl = BACKEND_URL.replace(/^http/, 'ws') + `/ws/runner/${workspace}/${project}`;
+    const cmdStr = args.join(' ');
+
+    console.log(chalk.cyan('\n📡 NEXUS-X Live Telemetry Agent\n'));
+    console.log(chalk.white(`  Server:    ${chalk.bold(BACKEND_URL)}`));
+    console.log(chalk.white(`  Project:   ${chalk.bold(config.remote)}`));
+    console.log(chalk.white(`  Command:   ${chalk.bold(cmdStr)}`));
+    console.log(chalk.white(`  WebSocket: ${chalk.gray(wsUrl)}\n`));
+
+    // ── Connect WebSocket to backend ──
+    let ws = null;
+    let wsConnected = false;
+
+    try {
+      const WebSocket = (await import('ws')).default;
+      ws = new WebSocket(wsUrl);
+
+      await new Promise((resolve, reject) => {
+        ws.on('open', () => {
+          wsConnected = true;
+          console.log(chalk.green('✓ Connected to Nexus-X backend. Streaming logs...\n'));
+          console.log(chalk.gray('─'.repeat(60) + '\n'));
+          resolve();
+        });
+        ws.on('error', (err) => {
+          console.log(chalk.yellow(`⚠ WebSocket connection failed: ${err.message}`));
+          console.log(chalk.yellow('  Logs will be buffered and sent via HTTP fallback.\n'));
+          resolve(); // Don't block — run the process anyway
+        });
+        // Timeout after 5s
+        setTimeout(() => {
+          if (!wsConnected) {
+            console.log(chalk.yellow('⚠ WebSocket connection timed out. Running in offline mode.\n'));
+            resolve();
+          }
+        }, 5000);
+      });
+    } catch {
+      console.log(chalk.yellow('⚠ WebSocket module not available. Running in offline mode.\n'));
+    }
+
+    // Helper to send a log line to the backend
+    function sendLog(line, stream = 'stdout') {
+      if (ws && wsConnected && ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: 'log', line, stream }));
+      }
+    }
+
+    function sendExit(code) {
+      if (ws && wsConnected && ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: 'exit', code }));
+        setTimeout(() => ws.close(), 500);
+      }
+    }
+
+    // ── Spawn the wrapped process ──
+    const { spawn } = require('child_process');
+    const child = spawn(args[0], args.slice(1), {
+      shell: true,
+      cwd: process.cwd(),
+      env: { ...process.env, NEXUS_TELEMETRY: 'active' }
+    });
+
+    // Buffer for HTTP fallback
+    const logBuffer = [];
+
+    child.stdout.on('data', (data) => {
+      const text = data.toString();
+      process.stdout.write(text); // Mirror to local terminal
+      text.split('\n').filter(Boolean).forEach(line => {
+        sendLog(line, 'stdout');
+        logBuffer.push({ line, stream: 'stdout', ts: Date.now() });
+      });
+    });
+
+    child.stderr.on('data', (data) => {
+      const text = data.toString();
+      process.stderr.write(text); // Mirror to local terminal
+      text.split('\n').filter(Boolean).forEach(line => {
+        sendLog(line, 'stderr');
+        logBuffer.push({ line, stream: 'stderr', ts: Date.now() });
+      });
+    });
+
+    child.on('close', async (code) => {
+      console.log(chalk.gray('\n' + '─'.repeat(60)));
+      console.log(
+        code === 0
+          ? chalk.green(`\n✓ Process exited cleanly (code 0)`)
+          : chalk.red(`\n✗ Process exited with code ${code}`)
+      );
+
+      sendExit(code);
+
+      // HTTP fallback: if WebSocket wasn't connected, POST the logs
+      if (!wsConnected && logBuffer.length > 0) {
+        console.log(chalk.cyan('\n📤 Uploading buffered logs via HTTP...'));
+        try {
+          await axios.post(
+            `${BACKEND_URL}/api/repo/${workspace}/${project}/logs`,
+            { logs: logBuffer, exit_code: code },
+            { timeout: 30000 }
+          );
+          console.log(chalk.green(`✓ ${logBuffer.length} log lines uploaded.\n`));
+        } catch (err) {
+          console.log(chalk.yellow(`⚠ Log upload failed: ${err.message}\n`));
+        }
+      }
+
+      console.log(chalk.cyan(`📊 View live in dashboard: ${BACKEND_URL.replace(/:\d+$/, ':5173')}\n`));
+      process.exit(code);
+    });
+
+    // Handle user Ctrl+C
+    process.on('SIGINT', () => {
+      child.kill('SIGINT');
+    });
+    process.on('SIGTERM', () => {
+      child.kill('SIGTERM');
+    });
+  });
+
+program
   .command('analyze')
   .description('Build the Code Intelligence Graph from the latest pushed snapshot')
   .action(async () => {
@@ -270,6 +478,7 @@ program
     }
 
     const [workspace, project] = config.remote.split('/');
+    const BACKEND_URL = getBackendUrl(config);
     const api = `${BACKEND_URL}/api/repo/${workspace}/${project}`;
 
     console.log(chalk.cyan('\n🧠 NEXUS-X Code Intelligence Graph\n'));
@@ -311,18 +520,18 @@ program
       console.log(chalk.white(`│  Class inheritance:  ${chalk.bold(String(res.extends || '0/0').padStart(15))}`));
 
       console.log(chalk.cyan('├─────────────────────────────────────────┤'));
-      console.log(chalk.cyan('│  🕸️  Neo4j Graph                        │'));
+      console.log(chalk.cyan('│  🕸️  MongoDB Native Graph Engine        │'));
       console.log(chalk.cyan('├─────────────────────────────────────────┤'));
 
       const graph = data.graph || {};
-      console.log(chalk.white(`│  Nodes created:     ${chalk.bold(String(graph.nodes_created || 0).padStart(16))}`));
-      console.log(chalk.white(`│  Edges created:     ${chalk.bold(String(graph.edges_created || 0).padStart(16))}`));
-      console.log(chalk.white(`│  CALLS edges:       ${chalk.bold(String(graph.calls || 0).padStart(16))}`));
-      console.log(chalk.white(`│  IMPORTS edges:     ${chalk.bold(String(graph.imports || 0).padStart(16))}`));
-      console.log(chalk.white(`│  EXTENDS edges:     ${chalk.bold(String(graph.extends || 0).padStart(16))}`));
+      console.log(chalk.white(`│  Nodes matched:     ${chalk.bold(String(graph.nodes || 0).padStart(16))}`));
+      console.log(chalk.white(`│  Edges mapped:      ${chalk.bold(String(graph.edges || 0).padStart(16))}`));
+      console.log(chalk.white(`│  Processing job:    ${chalk.bold(String(data.job_id || 'sync').padStart(16))}`));
+      console.log(chalk.white(`│  Engine status:     ${chalk.bold(String(data.status || 'ok').padStart(16))}`));
+      console.log(chalk.white(`│  Async mode:        ${chalk.bold(String('Enabled').padStart(16))}`));
 
       console.log(chalk.cyan('└─────────────────────────────────────────┘'));
-      console.log(chalk.green('\n✓ Knowledge graph ready in Neo4j.\n'));
+      console.log(chalk.green('\n✓ Knowledge graph building dynamically in MongoDB.\n'));
 
     } catch (err) {
       analyzeSpinner.fail(chalk.red('Analysis failed.'));

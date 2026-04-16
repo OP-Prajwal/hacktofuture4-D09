@@ -7,7 +7,9 @@ User question → Graph search (tag-based) → Context extraction → LLM reason
 
 import requests
 import json
-from db.neo4j_db import neo4j_db
+import os
+from collections import deque
+from db.mongo import mongo
 from .semantic_enricher import TAG_RULES
 
 # ── LLM Integration (Phase 3) ────────────────────────────────────────────────
@@ -15,44 +17,34 @@ from .semantic_enricher import TAG_RULES
 LLM_API_URL = "http://localhost:11434/api/generate"
 USE_LLM = True  # Set to True when Ollama server is running
 
-def _get_repo_stats(project_path: str) -> str:
-    """Fetch global node counts for the project to provide perspective to the AI."""
-    q = "MATCH (n {project: $p}) RETURN labels(n)[0] as type, count(*) as count"
-    try:
-        print(f"[CIG Stats] Fetching counts for: {project_path}")
-        results = neo4j_db.run_query(q, {"p": project_path})
-        print(f"[CIG Stats] Raw Results: {results}")
-        if not results:
-            return "None (empty graph)"
+def _get_repo_stats(nodes: list[dict]) -> str:
+    """Compute global node counts for the project to provide perspective to the AI."""
+    if not nodes:
+        return "None (empty graph)"
+    
+    counts_by_type = {}
+    for n in nodes:
+        ntype = n.get("type", "Unknown")
+        counts_by_type[ntype] = counts_by_type.get(ntype, 0) + 1
         
-        stats = []
-        for r in results:
-            label = r.get("type") or "Unknown"
-            count = r.get("count", 0)
-            # Pluralize correctly
-            p_label = f"{label}es" if label.endswith('s') or label.endswith('ch') or label.endswith('sh') else f"{label}s"
-            stats.append(f"{p_label}: {count}")
-        return ", ".join(stats)
-    except Exception as e:
-        print(f"[CIG Stats] Failed: {e}")
-        return "Unknown (database error)"
-
-import os
+    stats = []
+    for label, count in sorted(counts_by_type.items(), key=lambda x: str(x[0])):
+        p_label = f"{label}es" if str(label).endswith('s') or str(label).endswith('ch') or str(label).endswith('sh') else f"{label}s"
+        stats.append(f"{p_label}: {count}")
+    return ", ".join(stats)
 
 def ask_repository(workspace: str, project_name: str, question: str) -> dict:
     """
     Query flow:
     1. Extract keywords from question to find relevant tags
-    2. Query Neo4j for nodes with those tags
-    3. Expand neighbors (calls/dependencies)
+    2. Search flat MongoDB nodes for those tags
+    3. Expand neighbors (calls/dependencies) in-memory
     4. Pass context to LLM for final answer
     """
     project_path = f"{workspace}/{project_name}"
     
     # ── FORCE LOAD README ──
-    # Directly read the file from disk to bypass graph omissions
     readme_content = ""
-    # Try multiple possible absolute and relative backend paths just to be safe
     paths_to_check = [
         os.path.join("c:\\nexus-X", project_name, "README.md"),
         os.path.join(project_name, "README.md"),
@@ -66,6 +58,18 @@ def ask_repository(workspace: str, project_name: str, question: str) -> dict:
                 break
             except Exception:
                 pass
+                
+    # Load graph from Mongo
+    doc = mongo.get_collection("graphs").find_one({"project": project_path}, {"_id": 0})
+    if not doc:
+        return {
+            "question": question,
+            "answer": "Graph not found. Please click 'Create Knowledge Graph' first.",
+            "graph_context": {"nodes_found": 0, "relevant_tags": [], "nodes": []}
+        }
+        
+    all_nodes = doc.get("nodes", [])
+    all_edges = doc.get("edges", [])
     
     # 1. Identify relevant tags
     q_lower = question.lower()
@@ -76,101 +80,101 @@ def ask_repository(workspace: str, project_name: str, question: str) -> dict:
                 relevant_tags.append(tag)
                 
     # 2. Search graph for these tags
+    matched_nodes = []
     if not relevant_tags:
-        # ── Fallback: Repo Overview ──
-        # If no specific tags match, fetch the most important/connected nodes.
-        # Use coalesce to handle cases where blast_radius might be missing on old nodes.
-        query = """
-        MATCH (n {project: $project_path})
-        RETURN n, labels(n) as labels
-        ORDER BY coalesce(n.blast_radius, 0) DESC
-        LIMIT 10
-        """
-        params = {"project_path": project_path}
+        # Fallback: Repo Overview (Top 10 highest blast radius)
+        sorted_nodes = sorted(all_nodes, key=lambda x: x.get("blast_radius", 0), reverse=True)
+        matched_nodes = sorted_nodes[:10]
     else:
-        query = """
-        MATCH (n {project: $project_path})
-        WHERE any(t IN n.tags WHERE t IN $tags) OR labels(n)[0] IN $labels
-        RETURN n, labels(n) as labels 
-        ORDER BY coalesce(n.blast_radius, 0) DESC
-        LIMIT 20
-        """
-        params = {
-            "project_path": project_path, 
-            "tags": relevant_tags,
-            "labels": [t for t in relevant_tags if t in {"Function", "Class", "File", "Module"}]
-        }
-    
-    try:
-        print("query ",query)
-        print("params ",params)
-        results = neo4j_db.run_query(query, params)
-        print("neo4j results ",results)
-    except Exception as e:
-        print(f"[CIG Query] Graph offline ({e}), returning empty.")
-        results = []
+        # Filter nodes that have relevant tags OR whose label matches
+        relevant_labels = {t for t in relevant_tags if t in {"Function", "Class", "File", "Module"}}
+        
+        for n in all_nodes:
+            n_tags = n.get("tags", [])
+            n_type = n.get("type", "")
+            
+            if any(t in relevant_tags for t in n_tags) or n_type in relevant_labels:
+                matched_nodes.append(n)
+                
+        # Sort by impact and limit
+        matched_nodes = sorted(matched_nodes, key=lambda x: x.get("blast_radius", 0), reverse=True)[:20]
         
     context_nodes = []
-    node_ids = []
-    for record in results:
-        node = record["n"]
-        label = record["labels"][0] if record["labels"] else "Unknown"
-        qname = node.get("qualified_name") or node.get("name")
-        node_ids.append(qname)
-        
+    node_ids = set()
+    node_by_id = {n.get("id") or n.get("qualified_name"): n for n in all_nodes}
+    
+    for n in matched_nodes:
+        nid = n.get("id") or n.get("qualified_name")
+        if not nid: continue
+        node_ids.add(nid)
         context_nodes.append({
-            "type": label,
-            "name": qname,
-            "summary": node.get("summary", ""),
-            "tags": node.get("tags", []),
-            "file": node.get("file_path", "")
+            "type": n.get("type", "Unknown"),
+            "name": n.get("name") or nid.split("/")[-1],
+            "summary": n.get("summary", ""),
+            "tags": n.get("tags", []),
+            "file": n.get("file_path") or n.get("file", "")
         })
         
-    # 3. Deep Traversal (Path Tracing)
-    # We don't just want neighbors; we want to see the "flow"
+    # 3. Deep Traversal (Path Tracing up to depth 2)
     trace_map = []
-    if node_ids and results:
-        # Find paths up to 2 hops away to trace the logic flow
-        path_query = """
-        MATCH p = (a)-[r:CALLS|IMPORTS|EXTENDS*1..2]->(b)
-        WHERE (a.project = $path) 
-          AND (a.qualified_name IN $nodes)
-          AND (a <> b)
-        RETURN 
-            [n in nodes(p) | n.qualified_name] as path_nodes,
-            [rel in relationships(p) | type(rel)] as rel_types
-        LIMIT 15
-        """
-        try:
-            paths = neo4j_db.run_query(path_query, {"path": project_path, "nodes": node_ids})
-            for entry in paths:
-                steps = []
-                p_nodes = entry['path_nodes']
-                p_rels = entry['rel_types']
-                for i in range(len(p_rels)):
-                    steps.append(f"{p_nodes[i]} --[{p_rels[i]}]--> {p_nodes[i+1]}")
-                trace_map.append(" -> ".join(steps))
-        except Exception as e:
-            print(f"[CIG Query] Traversal failed: {e}")
+    if node_ids and all_edges:
+        # Build directed adjacency list
+        adj = {}
+        valid_rels = {'CALLS', 'IMPORTS', 'EXTENDS'}
+        for e in all_edges:
+            rel_type = e.get("type", "")
+            if rel_type not in valid_rels:
+                continue
+            src = e.get("source")
+            tgt = e.get("target")
+            if src and tgt:
+                if src not in adj: adj[src] = []
+                # Only add if we haven't added this exact edge
+                if (tgt, rel_type) not in adj[src]:
+                    adj[src].append((tgt, rel_type))
+                    
+        # BFS up to 2 hops for each starting node
+        for start_id in node_ids:
+            queue = deque([(start_id, [start_id], [])])  # (current_node, path_nodes, path_rels)
+            
+            while queue:
+                curr, p_nodes, p_rels = queue.popleft()
+                
+                if len(p_nodes) > 1:
+                    # Format standard path: A --[CALLS]--> B
+                    steps = []
+                    for i in range(len(p_rels)):
+                        steps.append(f"{p_nodes[i]} --[{p_rels[i]}]--> {p_nodes[i+1]}")
+                    trace_string = " -> ".join(steps)
+                    if trace_string not in trace_map:
+                        trace_map.append(trace_string)
+                
+                if len(p_nodes) <= 2:  # Allow 1 more hop (max 2 edges / 3 nodes)
+                    for nxt, r_type in adj.get(curr, []):
+                        if nxt not in p_nodes:  # Avoid loops
+                            queue.append((nxt, p_nodes + [nxt], p_rels + [r_type]))
+                            
+        # Limit total traced paths to prevent blowing context window
+        trace_map = list(set(trace_map))[:15]
 
     # 4. Include Global Stats
-    repo_stats = _get_repo_stats(project_path)
+    repo_stats = _get_repo_stats(all_nodes)
     print(f"[CIG Query] Final Repo Stats: {repo_stats}")
 
     # Build context prompt with structural hierarchy
     context_str = f"### Overall Repository Statistics\n{repo_stats}\n\n"
     
-    # Attempt to fetch README explicitly from disk loaded earlier, or fallback to graph
     if readme_content:
         context_str += f"### Repository README.md Content\n[ABSOLUTE GROUND TRUTH - READ CAREFULLY]\n{readme_content}\n\n"
     else:
-        readme_query = "MATCH (n {project: $path}) WHERE n.name ENDS WITH 'README.md' RETURN n.summary as summary LIMIT 1"
-        try:
-            readme_res = neo4j_db.run_query(readme_query, {"path": project_path})
-            if readme_res and readme_res[0].get("summary"):
-                context_str += f"### Repository README.md Content\n{readme_res[0]['summary']}\n\n"
-        except Exception:
-            pass
+        # Extract readme dynamically if possible
+        for n in all_nodes:
+            name = str(n.get("name", ""))
+            if name.endswith("README.md"):
+                smry = n.get("summary", "")
+                if smry:
+                    context_str += f"### Repository README.md Content\n{smry}\n\n"
+                break
 
     context_str += "### Codebase Architectural Map\n\n"
     context_str += "#### Core Components:\n"
@@ -185,13 +189,12 @@ def ask_repository(workspace: str, project_name: str, question: str) -> dict:
         
     if trace_map:
         context_str += "#### Logic Flow & Dependencies:\n"
-        for trace in list(set(trace_map))[:10]: # De-duplicate and limit
+        for trace in trace_map:
             context_str += f"- {trace}\n"
         context_str += "\n"
 
     # 5. Ask LLM
     answer = ""
-    # Instruct the LLM to think like an architect using the graph paths
     system_instruction = (
         "You are an AI assistant connected to a knowledge graph of the current repository.\n"
         "The graph is already created from the repository. It contains functions, files, modules, "
@@ -243,7 +246,6 @@ def ask_repository(workspace: str, project_name: str, question: str) -> dict:
         except Exception as e:
             answer = f"Error reaching local LLM: {e}"
     else:
-        # Mock LLM response if offline
         if not context_nodes:
             answer = "I couldn't find relevant code related to your question in the graph."
         else:

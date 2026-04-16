@@ -49,6 +49,8 @@ class HistoricalIncident(BaseModel):
 class Hypothesis(BaseModel):
     title: str
     confidence: float
+    detailed_breakdown: str = ""
+    suggested_fix: str = ""
     evidence: list[str] = Field(default_factory=list)
     likely_locations: list[str] = Field(default_factory=list)
     next_steps: list[str] = Field(default_factory=list)

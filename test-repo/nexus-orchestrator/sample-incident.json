@@ -1,0 +1,17 @@
+{
+  "id": "inc-001",
+  "title": "User checkout flow returning 500s",
+  "service": "checkout",
+  "environment": "production",
+  "error_summary": "TypeError: cannot read properties of undefined",
+  "stack_trace": "TypeError: cannot read properties of undefined at handleCheckout (src/main.js:12:8) at startServer (src/utils.js:4:2)",
+  "logs": [
+    "2026-04-14T10:01:05Z ERROR checkout request failed for tenant acme",
+    "2026-04-14T10:01:05Z ERROR TypeError cannot read properties of undefined",
+    "2026-04-14T10:01:06Z WARN rollback candidate not yet applied"
+  ],
+  "tags": [
+    "http-500",
+    "checkout"
+  ]
+}

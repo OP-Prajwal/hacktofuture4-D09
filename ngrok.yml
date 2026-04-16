@@ -1,0 +1,9 @@
+version: "2"
+tunnels:
+    nexus-api:
+        addr: 8000
+        proto: http
+    ollama:
+        addr: 11434
+        proto: http
+authtoken: 30HYmlE3UukqdXVcA7HkgGnyKMM_7fBdjAe65RgxzUTNeWU3L
