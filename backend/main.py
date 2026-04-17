@@ -13,6 +13,7 @@ from services.commit_service import create_commit, get_commits, get_latest_tree
 from services.auth_service import register_user, login_user, decode_access_token
 from services.project_db_service import create_project, get_workspace_projects, add_project_member, remove_project_member
 from services.cig import analyze_repository, get_project_graph, ask_repository
+from services.ai_analyzer_service import ai_analyzer
 
 app = FastAPI(title="NEXUS-X Backend", version="1.0.0")
 
@@ -527,6 +528,38 @@ def get_incident(workspace: str, project_name: str, incident_id: str):
     if not doc:
         raise HTTPException(status_code=404, detail="Incident report not found")
     return doc
+
+
+# ─── CI/CD AI Analyzer Routes ────────────────────────────────────────────────
+
+class CIFile(BaseModel):
+    path: str
+    content: str
+
+class CIAnalyzeRequest(BaseModel):
+    files: List[CIFile]
+    workspace: Optional[str] = "default"
+    project: Optional[str] = "default"
+    custom_rules: Optional[List[str]] = None
+
+@app.post("/analyze")
+def analyze_code_ci(body: CIAnalyzeRequest):
+    """
+    Dedicated endpoint for CI/CD pipelines to analyze code snippets.
+    Returns PASS/FAIL and risk scores.
+    Automatically persists reports to the DB for UI visibility.
+    """
+    try:
+        files_data = [{"path": f.path, "content": f.content} for f in body.files]
+        result = ai_analyzer.analyze_code(
+            files_data, 
+            workspace=body.workspace, 
+            project=body.project, 
+            custom_rules=body.custom_rules
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ─── Health / test routes ─────────────────────────────────────────────────────

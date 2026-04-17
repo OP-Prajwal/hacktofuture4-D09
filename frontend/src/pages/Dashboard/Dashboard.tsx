@@ -181,7 +181,7 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
   const chatInputRef = useRef<HTMLInputElement>(null);
 
   // Tab state
-  const [activeTab, setActiveTab] = useState<'repo' | 'agent' | 'functions' | 'server' | 'team'>('repo');
+  const [activeTab, setActiveTab] = useState<'repo' | 'agent' | 'functions' | 'server' | 'team' | 'cicd'>('repo');
 
   // Blast Radius state
   const [blastFiles, setBlastFiles] = useState('');
@@ -1185,6 +1185,13 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                             {incidents.length > 0 ? 'Crash Detected' : 'Stable'}
                           </span>
                         </div>
+                        <div className="metric-card" onClick={() => setActiveTab('cicd')} style={{ cursor: 'pointer', background: '#0d1117', border: activeTab === 'cicd' ? '1px solid #388bfd' : '1px solid #30363d', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '12px', color: activeTab === 'cicd' ? '#388bfd' : '#8b949e', fontWeight: 600 }}>CI/CD CONTRACTS</span>
+                          <span style={{ fontSize: '20px', color: incidents.filter(i => i.status === 'CI_ANALYSIS').some(i => i.exit_code !== 0) ? '#f85149' : '#3fb950', fontWeight: 'bold', marginTop: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{width: '8px', height: '8px', background: incidents.filter(i => i.status === 'CI_ANALYSIS').some(i => i.exit_code !== 0) ? '#f85149' : '#3fb950', borderRadius: '50%'}}></span>
+                            {incidents.filter(i => i.status === 'CI_ANALYSIS').some(i => i.exit_code !== 0) ? 'Breached' : 'Enforced'}
+                          </span>
+                        </div>
                         <div className="metric-card" onClick={() => setActiveTab('team')} style={{ cursor: 'pointer', background: '#0d1117', border: activeTab === 'team' ? '1px solid #58a6ff' : '1px solid #30363d', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column' }}>
                           <span style={{ fontSize: '12px', color: activeTab === 'team' ? '#58a6ff' : '#8b949e', fontWeight: 600 }}>TEAM MEMBERS</span>
                           <span style={{ fontSize: '20px', color: '#e6edf3', fontWeight: 'bold', marginTop: '8px' }}>{(p.members || []).length || 1}</span>
@@ -1599,6 +1606,82 @@ const Dashboard = ({ session, onLogout }: DashboardProps) => {
                               <LiveTerminal workspace={parseCloneCode(p.cloneCode)[0]} project={parseCloneCode(p.cloneCode)[1]} />
                             </div>
                           </div>
+                        </div>
+                      )}
+
+                      {/* ── CI/CD Contracts View ── */}
+                      {activeTab === 'cicd' && (
+                        <div className="cicd-contracts-main" style={{ marginTop: '30px', background: '#0d1117', border: '1px solid #30363d', borderRadius: '8px', padding: '24px' }}>
+                          <div className="section-title" style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <h3 style={{ margin: 0, fontSize: '18px' }}>📜 AI Code Contracts</h3>
+                              <span className="badge" style={{ background: '#388bfd' }}>CI/CD</span>
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              <button className="btn-dash-secondary" style={{ padding: '4px 12px', fontSize: '12px' }}>Download Contract Template</button>
+                            </div>
+                          </div>
+
+                          <div className="intelligence-center" style={{ marginBottom: '24px' }}>
+                            <div className="ic-card" style={{ border: '1px solid #388bfd44', background: '#388bfd05' }}>
+                              <h4>How to enforce a "Code Contract"</h4>
+                              <p style={{ fontSize: '13px', color: '#8b949e', marginBottom: '16px' }}>
+                                Nexus-X turns your business requirements into an automated gate. Create a <code>nexus-rules.yml</code> in your repo, and our AI will enforce it on every PR.
+                              </p>
+                              <div className="terminal-block" style={{ background: '#010409' }}>
+                                <div className="term-line" style={{ color: '#8b949e' }}># 1. Add nexus-rules.yml to your repository root</div>
+                                <div className="term-line" style={{ color: '#8b949e' }}># 2. Define your business logic rules</div>
+                                <div className="term-line" style={{ color: '#8b949e' }}># 3. Nexus AI handles the rest</div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="section-subtitle" style={{ color: '#e6edf3', fontWeight: 600, fontSize: '14px', marginBottom: '12px' }}>
+                            Recent CI/CD Analysis History
+                          </div>
+
+                          {incidents.filter(i => i.status === 'CI_ANALYSIS').length === 0 ? (
+                            <div className="empty-state" style={{ background: 'transparent', border: '1px dashed #30363d' }}>
+                              No CI/CD checks recorded yet. Run the Nexus AI Analyzer in your pipeline.
+                            </div>
+                          ) : (
+                            <div className="incidents-list" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                              {incidents.filter(i => i.status === 'CI_ANALYSIS').map((inc) => (
+                                <div key={inc.incident_id} className="ic-card" style={{ 
+                                  padding: '16px', 
+                                  display: 'flex', 
+                                  justifyContent: 'space-between', 
+                                  alignItems: 'center',
+                                  borderLeft: `4px solid ${inc.exit_code === 0 ? '#3fb950' : '#f85149'}`
+                                }}>
+                                  <div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                                      <span style={{
+                                        background: inc.exit_code === 0 ? 'rgba(63,185,80,0.1)' : 'rgba(248,81,73,0.1)', 
+                                        color: inc.exit_code === 0 ? '#3fb950' : '#f85149', 
+                                        padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold'
+                                      }}>{inc.exit_code === 0 ? 'COMPLIANT' : 'BREACHED'}</span>
+                                      <strong style={{ color: '#e6edf3', fontSize: '14px' }}>{inc.incident_id}</strong>
+                                      <span style={{ color: '#8b949e', fontSize: '12px' }}>• {new Date(inc.created_at).toLocaleString()}</span>
+                                    </div>
+                                    <div style={{ color: '#8b949e', fontSize: '12px' }}>{inc.summary}</div>
+                                  </div>
+                                  <button className="btn-dash-primary" onClick={async () => {
+                                    try {
+                                      const res = await fetch(`${BACKEND}/api/repo/${encodeURIComponent(inc.workspace)}/${encodeURIComponent(inc.project)}/incidents/${inc.incident_id}`);
+                                      if (res.ok) {
+                                        const data = await res.json();
+                                        setViewingIncident({
+                                          ...data,
+                                          report_markdown: buildIncidentMarkdown(data),
+                                        });
+                                      }
+                                    } catch (e) { }
+                                  }}>View Findings</button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
 

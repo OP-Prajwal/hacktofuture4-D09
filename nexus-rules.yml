@@ -1,0 +1,32 @@
+# NEXUS-X Code Contract
+# These rules are enforced as a "Smart Contract" for your repository.
+# If code violates these rules, the CI/CD pipeline will fail.
+
+version: 1.0
+project: nexus-x-demo
+
+rules:
+  - id: "BUSINESS_001"
+    category: "Business Logic"
+    rule: "All financial or payment-related functions must include logging and a try/except block."
+    severity: "HIGH"
+
+  - id: "ARCH_001"
+    category: "Architecture"
+    rule: "The 'backend/db/' modules must NEVER be imported directly into 'frontend/' components."
+    severity: "CRITICAL"
+
+  - id: "SEC_001"
+    category: "Security"
+    rule: "No plaintext secrets, tokens, or environment variables should be hardcoded in any .py or .js file."
+    severity: "HIGH"
+
+  - id: "STYLE_001"
+    category: "Clean Code"
+    rule: "Functions should not exceed 50 lines of code to maintain readability."
+    severity: "MEDIUM"
+
+# Automatic failure threshold
+enforcement:
+  fail_on_severity: ["HIGH", "CRITICAL"]
+  min_risk_score_to_fail: 70
